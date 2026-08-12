@@ -1,0 +1,49 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background); --color-foreground: var(--foreground); --color-card: var(--card); --color-card-foreground: var(--card-foreground); --color-popover: var(--popover); --color-popover-foreground: var(--popover-foreground); --color-primary: var(--primary); --color-primary-foreground: var(--primary-foreground); --color-secondary: var(--secondary); --color-secondary-foreground: var(--secondary-foreground); --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground); --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground); --color-destructive: var(--destructive); --color-border: var(--border); --color-input: var(--input); --color-ring: var(--ring); --color-chart-1: var(--chart-1); --color-chart-2: var(--chart-2); --color-chart-3: var(--chart-3); --color-chart-4: var(--chart-4); --color-chart-5: var(--chart-5); --color-sidebar: var(--sidebar); --color-sidebar-foreground: var(--sidebar-foreground); --color-sidebar-primary: var(--sidebar-primary); --color-sidebar-primary-foreground: var(--sidebar-primary-foreground); --color-sidebar-accent: var(--sidebar-accent); --color-sidebar-accent-foreground: var(--sidebar-accent-foreground); --color-sidebar-border: var(--sidebar-border); --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root { color-scheme: dark; --background: oklch(0.11 0.015 270); --foreground: oklch(0.96 0.025 85); --card: oklch(0.145 0.018 270); --card-foreground: oklch(0.97 0.01 270); --popover: oklch(0.16 0.02 270); --popover-foreground: oklch(0.97 0.01 270); --primary: oklch(0.68 0.22 294); --primary-foreground: oklch(0.98 0.025 85); --secondary: oklch(0.19 0.025 270); --secondary-foreground: oklch(0.95 0.01 270); --muted: oklch(0.18 0.02 270); --muted-foreground: oklch(0.65 0.03 270); --accent: oklch(0.21 0.04 270); --accent-foreground: oklch(0.97 0.01 270); --destructive: oklch(0.68 0.2 25); --border: oklch(1 0 0 / 11%); --input: oklch(1 0 0 / 13%); --ring: oklch(0.68 0.22 294); --chart-1: oklch(0.72 0.18 294); --chart-2: oklch(0.7 0.16 250); --chart-3: oklch(0.68 0.13 215); --chart-4: oklch(0.62 0.12 330); --chart-5: oklch(0.58 0.1 280); --radius: 0.7rem; --sidebar: oklch(0.095 0.015 270); --sidebar-foreground: oklch(0.97 0.01 270); --sidebar-primary: oklch(0.68 0.22 294); --sidebar-primary-foreground: oklch(0.98 0.01 270); --sidebar-accent: oklch(0.17 0.03 270); --sidebar-accent-foreground: oklch(0.97 0.01 270); --sidebar-border: oklch(1 0 0 / 9%); --sidebar-ring: oklch(0.68 0.22 294); --kevo-glow: oklch(0.68 0.22 294 / 35%); }
+
+@layer base { * { @apply border-border outline-ring/50; } html { background: var(--background); } body { @apply bg-background text-foreground; } }
+
+.kevo-mark { box-shadow: 0 0 22px var(--kevo-glow); }
+.kevo-logo-wrap { position: relative; background: #030409; box-shadow: none; }
+.kevo-logo-image { position: absolute; top: -25px; left: 0; width: 154px; max-width: none; height: auto; transform: none; }
+.kevo-pulse { background: linear-gradient(90deg, color-mix(in oklch, var(--primary) 7%, transparent), transparent 42%, color-mix(in oklch, var(--chart-2) 5%, transparent)); }
+.kevo-pulse-orbit { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chart-2) 28%, transparent); }
+.kevo-pulse-node { border: 1px solid var(--border); border-radius: 999px; padding: .4rem .65rem; color: var(--muted-foreground); font-size: .68rem; }
+.kevo-pulse-line { height: 1px; width: 2.5rem; background: linear-gradient(90deg, var(--primary), var(--chart-2)); }
+@media (prefers-reduced-motion: no-preference) { .kevo-pulse-orbit { animation: kevo-pulse 3s ease-in-out infinite; } }
+@keyframes kevo-pulse { 50% { transform: scale(1.06); } }
+.kevo-nav-active { position: relative; background: linear-gradient(90deg, color-mix(in oklch, var(--primary) 14%, transparent), color-mix(in oklch, var(--chart-2) 7%, transparent)); }
+.kevo-nav-active::after { content: ''; position: absolute; inset: 7px auto 7px 0; width: 2px; border-radius: 99px; background: linear-gradient(var(--primary), var(--chart-2)); box-shadow: 0 0 9px var(--kevo-glow); }
+.kevo-command { background: linear-gradient(120deg, color-mix(in oklch, var(--card) 94%, var(--primary)), color-mix(in oklch, var(--card) 96%, var(--chart-2))); }
+.kevo-command:hover, .kevo-command:focus-visible { background: linear-gradient(120deg, color-mix(in oklch, var(--card) 88%, var(--primary)), color-mix(in oklch, var(--card) 90%, var(--chart-2))); }
+.kevo-insight { position: relative; overflow: hidden; }
+.kevo-insight::before { content: ''; position: absolute; left: 0; top: 16px; bottom: 16px; width: 1px; background: linear-gradient(var(--primary), transparent 80%); opacity: .7; }
+.kevo-flow { position: relative; }
+.kevo-flow::before { content: ''; position: fixed; inset: 68px 0 0 auto; width: 42vw; max-width: 620px; pointer-events: none; opacity: .16; background: repeating-linear-gradient(135deg, transparent 0 44px, color-mix(in oklch, var(--primary) 16%, transparent) 45px 46px, transparent 47px 91px); mask-image: linear-gradient(to left, black, transparent 80%); }
+@media (max-width: 640px) { .kevo-flow::before { width: 80vw; opacity: .08; } .kevo-logo-wrap { width: 132px; } .kevo-logo-image { width: 132px; top: -21px; } .kevo-pulse-line { width: 1.5rem; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+
+.kevo-auth { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(420px, .9fr); overflow: hidden; }
+.kevo-auth-identity { position: relative; min-height: 100vh; overflow: hidden; background: #050509; }
+.kevo-auth-panel { display: flex; min-height: 100vh; align-items: center; justify-content: center; background: color-mix(in oklch, var(--background) 88%, var(--card)); padding: 3rem clamp(1.25rem, 5vw, 5rem); }
+.kevo-auth-grid { position: absolute; inset: 0; opacity: .55; background: linear-gradient(120deg, transparent 0 30%, color-mix(in oklch, var(--primary) 8%, transparent) 30.2% 30.3%, transparent 30.5% 68%, color-mix(in oklch, var(--chart-2) 9%, transparent) 68.2% 68.3%, transparent 68.5%), linear-gradient(45deg, transparent 0 48%, color-mix(in oklch, var(--primary) 6%, transparent) 48.2% 48.3%, transparent 48.5%); mask-image: linear-gradient(to bottom, black, transparent 88%); }
+.kevo-auth-grid::after { content: ''; position: absolute; width: 38rem; height: 38rem; right: -18rem; top: 12%; border: 1px solid color-mix(in oklch, var(--primary) 24%, transparent); transform: rotate(45deg); }
+.kevo-auth-mark { display: grid; height: 44px; width: 44px; place-items: center; border: 1px solid color-mix(in oklch, var(--foreground) 30%, transparent); background: linear-gradient(135deg, color-mix(in oklch, var(--primary) 22%, #050509), #050509 65%); color: var(--foreground); font-size: 1.25rem; font-weight: 700; letter-spacing: -.12em; transform: skew(-10deg); }
+.kevo-auth-mark span { transform: skew(10deg); }
+.kevo-gradient-text { background: linear-gradient(105deg, var(--primary), var(--chart-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.kevo-flow-line { position: absolute; bottom: 6.5rem; left: 4rem; height: 1px; width: min(64%, 520px); background: linear-gradient(90deg, var(--primary), var(--chart-2), transparent); opacity: .75; }
+.kevo-flow-line::after { content: ''; position: absolute; right: 26%; top: -4px; height: 9px; width: 9px; border: 1px solid var(--chart-2); background: #050509; transform: rotate(45deg); }
+.kevo-auth-cta { background: linear-gradient(105deg, var(--primary), var(--chart-2)); box-shadow: 0 8px 24px color-mix(in oklch, var(--primary) 14%, transparent); }
+.kevo-auth-input:-webkit-autofill { -webkit-text-fill-color: var(--foreground); box-shadow: 0 0 0 1000px var(--card) inset; transition: background-color 9999s ease-out; }
+@media (max-width: 900px) { .kevo-auth { grid-template-columns: 1fr; } .kevo-auth-identity { min-height: auto; } .kevo-auth-identity > div { min-height: 270px; } .kevo-auth-panel { min-height: calc(100vh - 270px); padding-top: 2.5rem; padding-bottom: 2.5rem; } }
+@media (max-width: 640px) { .kevo-auth-identity > div { min-height: 112px; padding: 1.25rem 1.25rem 0; } .kevo-auth-identity h1, .kevo-auth-identity p, .kevo-auth-identity .kevo-flow-line { display: none; } .kevo-auth-panel { min-height: calc(100vh - 112px); align-items: flex-start; padding: 2.5rem 1.25rem 2rem; } .kevo-auth-panel > div { max-width: none; } }
+
