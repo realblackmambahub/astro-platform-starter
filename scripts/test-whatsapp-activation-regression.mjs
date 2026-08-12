@@ -7,6 +7,7 @@ const assertions = [
   ['activation runs before inbound claim', route.indexOf('handleActivationMessage') < route.indexOf('claimInboundMessage')],
   ['password activation does not claim inbound message', activation.includes("current?.state === 'awaiting_password'")],
   ['password is not stored in metadata', !activation.includes('metadata: { password')],
+  ['password receipt stores only sanitized event', activation.includes('activation_password_received: true') && !activation.includes('metadata: { password')],
   ['profile uses auth user id', activation.includes('upsert({ id: authUser.id, whatsapp_phone: session.wa_id }')],
   ['phone uniqueness is checked server-side', activation.includes('linkedPhoneConflict')],
   ['completed session clears transient data', activation.includes('metadata: {}') && activation.includes("state,\n    customer_email: customerEmail ?? null")],

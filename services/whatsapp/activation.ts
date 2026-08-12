@@ -150,6 +150,16 @@ export async function handleActivationMessage(admin: Admin | null, waId: string,
     return { handled: true as const, reply: 'Sua ativação expirou. Envie qualquer mensagem para começar novamente.' }
   }
   if (current?.state === 'awaiting_password') {
+    const { error: eventError } = await admin
+      .from('whatsapp_activation_sessions')
+      .update({
+        metadata: { activation_password_received: true },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', current.id)
+      .eq('state', 'awaiting_password')
+    if (eventError) return { handled: true as const, reply: 'Não foi possível processar a ativação agora. Tente novamente.' }
+
     const result = await activateWithPassword(admin, current, text.trim())
     return { handled: true as const, reply: result.message ?? 'WhatsApp ativado. Agora suas mensagens financeiras serão registradas automaticamente.' }
   }
