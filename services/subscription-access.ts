@@ -17,7 +17,7 @@ export async function getCommercialAccess(): Promise<AccessResult> {
     .maybeSingle()
 
   const active = Boolean(data && (!data.expires_at || new Date(data.expires_at).getTime() > Date.now()))
-  return { authenticated: true, active, plan: active ? data.plan : null }
+  return { authenticated: true, active, plan: active && data ? data.plan : null }
 }
 
 export async function getWebhookAdminClient() {

@@ -24,7 +24,7 @@ export function SessionGuard({ children }: { children: React.ReactNode }) {
     }
 
     void verify()
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event: Parameters<Parameters<typeof supabase.auth.onAuthStateChange>[0]>[0], session: Parameters<Parameters<typeof supabase.auth.onAuthStateChange>[0]>[1]) => {
       if (!active) return
       if (event === 'SIGNED_OUT' || !session) {
         router.replace(`/auth/login?next=${encodeURIComponent(pathname || '/')}`)

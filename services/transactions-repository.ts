@@ -67,7 +67,7 @@ export async function importTransactions(rows: TransactionInput[], filename: str
     if (rowsError) throw rowsError
     const { data: insertedTransactions, error: transactionsError } = await supabase.from('transactions').insert(rows.map((row) => ({ ...row, user_id: userId, source: row.source || 'Importação' }))).select('id')
     if (transactionsError) throw transactionsError
-    insertedTransactionIds = (insertedTransactions ?? []).map((row) => row.id)
+    insertedTransactionIds = (insertedTransactions ?? []).map((row: { id: string }) => row.id)
     await supabase.from('imports').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', importRow.id).eq('user_id', userId)
     return { imported: rows.length, duplicateCount }
   } catch {

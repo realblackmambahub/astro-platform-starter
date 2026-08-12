@@ -17,9 +17,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     let active = true
-    void createClient().auth.getUser().then(({ data }) => {
+    void createClient().auth.getUser().then((result) => {
       if (!active) return
-      if (data.user) router.replace('/')
+      if (result.data.user) router.replace('/')
       else setCheckingSession(false)
     })
     return () => { active = false }
