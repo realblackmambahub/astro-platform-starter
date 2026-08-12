@@ -25,6 +25,17 @@ function isExpired(session: ActivationSession) {
   return new Date(session.expires_at).getTime() <= Date.now()
 }
 
+function safeError(error: unknown) {
+  return {
+    errorType: error instanceof Error ? error.name : typeof error,
+    errorCode: typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code ?? 'unknown') : 'unknown',
+  }
+}
+
+function activationLog(event: string, details: Record<string, unknown> = {}) {
+  console.error(`[WA ACTIVATION] ${event}`, details)
+}
+
 async function getSession(admin: Admin, waId: string) {
   const { data } = await admin
     .from('whatsapp_activation_sessions')
@@ -60,11 +71,16 @@ async function findAuthUserByEmail(admin: Admin, email: string) {
 }
 
 async function activateWithPassword(admin: Admin, session: ActivationSession, password: string) {
-  if (password.length < 8 || password.length > 128) return { ok: false as const, message: 'A senha deve ter entre 8 e 128 caracteres. Envie outra senha.' }
+  activationLog('password_state_entered')
+  const sessionValid = session.state === 'awaiting_password' && !isExpired(session) && Boolean(session.customer_email)
+  activationLog('session_valid=' + String(sessionValid))
+  const passwordPolicyValid = password.length >= 8 && password.length <= 128 && /[A-Za-z]/.test(password) && /[0-9]/.test(password)
+  activationLog('password_policy_valid=' + String(passwordPolicyValid))
+  if (!passwordPolicyValid) return { ok: false as const, message: 'A senha deve ter entre 8 e 128 caracteres, com pelo menos uma letra e um número. Envie outra senha.' }
   const email = session.customer_email
-  if (!email) return { ok: false as const, message: 'Não consegui validar o e-mail. Reinicie a ativação.' }
+  if (!sessionValid || !email) return { ok: false as const, message: 'Não consegui validar o e-mail. Reinicie a ativação.' }
 
-  const { data: subscription } = await admin
+  const { data: subscription, error: subscriptionLookupError } = await admin
     .from('subscriptions')
     .select('id, user_id, customer_email, status, expires_at')
     .ilike('customer_email', email)
@@ -73,21 +89,38 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
     .limit(1)
     .maybeSingle()
 
-  if (!subscription || (subscription.expires_at && new Date(subscription.expires_at).getTime() <= Date.now())) {
+  if (subscriptionLookupError) {
+    activationLog('subscription_lookup_error', safeError(subscriptionLookupError))
+  }
+  const subscriptionValid = Boolean(subscription && (!subscription.expires_at || new Date(subscription.expires_at).getTime() > Date.now()))
+  activationLog('subscription_valid=' + String(subscriptionValid))
+  if (!subscriptionValid || !subscription) {
     await closeSession(admin, session, 'failed')
     return { ok: false as const, message: 'Não consegui validar essa ativação. Confira o e-mail da compra.' }
   }
 
-  const existing = subscription.user_id
-    ? (await admin.auth.admin.getUserById(subscription.user_id)).data.user
-    : await findAuthUserByEmail(admin, email)
+  let existing = null
+  try {
+    if (subscription.user_id) {
+      const result = await admin.auth.admin.getUserById(subscription.user_id)
+      if (result.error) activationLog('auth_lookup_error', safeError(result.error))
+      existing = result.data.user
+    } else {
+      existing = await findAuthUserByEmail(admin, email)
+    }
+  } catch (error) {
+    activationLog('auth_lookup_error', safeError(error))
+  }
+  activationLog('existing_auth_found=' + String(Boolean(existing)))
   if (existing?.email?.toLowerCase() !== email) {
     await closeSession(admin, session, 'failed')
     return { ok: false as const, message: 'Não foi possível validar esta ativação. Verifique os dados e tente novamente.' }
   }
   let authUser = existing
   if (!authUser) {
+    activationLog('auth_create_started')
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true })
+    activationLog('auth_create_success=' + String(!created.error), created.error ? safeError(created.error) : {})
     if (created.error) {
       const recovered = await findAuthUserByEmail(admin, email)
       if (!recovered) {
@@ -102,11 +135,19 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
   if (!authUser) return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
 
   if (existing) {
+    activationLog('auth_update_started')
     const { error } = await admin.auth.admin.updateUserById(authUser.id, { password })
+    activationLog('auth_update_success=' + String(!error), error ? safeError(error) : {})
     if (error) return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
   }
 
-  const { data: currentProfile } = await admin.from('profiles').select('id, whatsapp_phone').eq('id', authUser.id).maybeSingle()
+  activationLog('profile_upsert_started')
+  const { data: currentProfile, error: currentProfileError } = await admin
+    .from('profiles')
+    .select('id, whatsapp_phone')
+    .eq('id', authUser.id)
+    .maybeSingle()
+  if (currentProfileError) activationLog('profile_lookup_error', safeError(currentProfileError))
   if (currentProfile?.whatsapp_phone && currentProfile.whatsapp_phone !== session.wa_id) {
     await closeSession(admin, session, 'failed')
     return { ok: false as const, message: 'Este acesso já está vinculado a outro WhatsApp. Não foi possível concluir a ativação.' }
@@ -124,21 +165,38 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
   }
 
   const { error: profileError } = await admin.from('profiles').upsert({ id: authUser.id, whatsapp_phone: session.wa_id }, { onConflict: 'id', ignoreDuplicates: false })
+  activationLog('profile_upsert_success=' + String(!profileError), profileError ? safeError(profileError) : {})
   if (profileError) return { ok: false as const, message: 'Não consegui vincular este WhatsApp agora. Tente novamente.' }
 
+  activationLog('whatsapp_link_started')
   const { data: linkedPhoneConflict } = await admin
     .from('profiles')
     .select('id')
     .eq('whatsapp_phone', session.wa_id)
     .neq('id', authUser.id)
     .maybeSingle()
+  activationLog('whatsapp_link_success=' + String(!linkedPhoneConflict))
   if (linkedPhoneConflict) {
     await closeSession(admin, session, 'failed')
     return { ok: false as const, message: 'Não foi possível concluir esta ativação. Verifique os dados e tente novamente.' }
   }
 
-  await admin.from('subscriptions').update({ user_id: authUser.id, updated_at: new Date().toISOString() }).eq('id', subscription.id).is('user_id', null)
-  await closeSession(admin, session, 'completed')
+  activationLog('subscription_link_started')
+  const { data: linkedSubscription, error: subscriptionLinkError } = await admin
+    .from('subscriptions')
+    .update({ user_id: authUser.id, updated_at: new Date().toISOString() })
+    .eq('id', subscription.id)
+    .or(`user_id.is.null,user_id.eq.${authUser.id}`)
+    .select('id, user_id')
+    .maybeSingle()
+  activationLog('subscription_link_success=' + String(!subscriptionLinkError && Boolean(linkedSubscription)), subscriptionLinkError ? safeError(subscriptionLinkError) : {})
+  if (subscriptionLinkError || !linkedSubscription) return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
+
+  activationLog('session_complete_started')
+  const { error: sessionCompleteError } = await admin.from('whatsapp_activation_sessions').update({ state: 'completed', customer_email: null, metadata: {}, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', session.id).in('state', ['awaiting_email', 'awaiting_password'])
+  activationLog('session_complete_success=' + String(!sessionCompleteError), sessionCompleteError ? safeError(sessionCompleteError) : {})
+  if (sessionCompleteError) return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
+
   return { ok: true as const, userId: authUser.id }
 }
 
