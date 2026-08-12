@@ -5,6 +5,7 @@ import { sendWhatsAppTextMessage } from '@/services/whatsapp/send-message'
 import { sendWhatsAppInteractiveMessage } from '@/services/whatsapp/send-interactive'
 import { generateWhatsAppReply } from '@/services/whatsapp/gemini-reply'
 import { getWebhookAdminClient } from '@/services/subscription-access'
+import { handleActivationMessage } from '@/services/whatsapp/activation'
 import {
   parseFinanceIntent,
   type FinanceIntent,
@@ -578,6 +579,23 @@ export async function POST(request: Request) {
      */
     if (processedMessageIds.has(message.messageId)) {
       continue
+    }
+
+    const activationAdmin = await getWebhookAdminClient()
+    const activationUser = await findWhatsAppUser(activationAdmin, message.from)
+
+    /*
+     * A ativação é resolvida antes do claim inbound. Em awaiting_password,
+     * a senha nunca entra em whatsapp_messages nem no pipeline financeiro.
+     */
+    if (activationAdmin && !activationUser) {
+      const activation = await handleActivationMessage(activationAdmin, message.from, message.text)
+      if (activation.handled) {
+        const outbound = await sendWhatsAppTextMessage(message.from, activation.reply)
+        if (outbound.ok) await recordOutbound(activationAdmin, outbound.messageId, message.from)
+        processed += 1
+        continue
+      }
     }
 
     const claim = await claimInboundMessage(
