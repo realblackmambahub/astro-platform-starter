@@ -85,7 +85,20 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
     await closeSession(admin, session, 'failed')
     return { ok: false as const, message: 'Não foi possível validar esta ativação. Verifique os dados e tente novamente.' }
   }
-  const authUser = existing ?? (await admin.auth.admin.createUser({ email, password, email_confirm: true })).data.user
+  let authUser = existing
+  if (!authUser) {
+    const created = await admin.auth.admin.createUser({ email, password, email_confirm: true })
+    if (created.error) {
+      const recovered = await findAuthUserByEmail(admin, email)
+      if (!recovered) {
+        await closeSession(admin, session, 'failed')
+        return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
+      }
+      authUser = recovered
+    } else {
+      authUser = created.data.user
+    }
+  }
   if (!authUser) return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
 
   if (existing) {
@@ -113,13 +126,16 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
   const { error: profileError } = await admin.from('profiles').upsert({ id: authUser.id, whatsapp_phone: session.wa_id }, { onConflict: 'id', ignoreDuplicates: false })
   if (profileError) return { ok: false as const, message: 'Não consegui vincular este WhatsApp agora. Tente novamente.' }
 
-  const { error: emailConflict } = await admin
+  const { data: linkedPhoneConflict } = await admin
     .from('profiles')
     .select('id')
     .eq('whatsapp_phone', session.wa_id)
     .neq('id', authUser.id)
     .maybeSingle()
-  if (emailConflict) return { ok: false as const, message: 'Não foi possível concluir esta ativação. Verifique os dados e tente novamente.' }
+  if (linkedPhoneConflict) {
+    await closeSession(admin, session, 'failed')
+    return { ok: false as const, message: 'Não foi possível concluir esta ativação. Verifique os dados e tente novamente.' }
+  }
 
   await admin.from('subscriptions').update({ user_id: authUser.id, updated_at: new Date().toISOString() }).eq('id', subscription.id).is('user_id', null)
   await closeSession(admin, session, 'completed')

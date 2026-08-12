@@ -582,7 +582,9 @@ export async function POST(request: Request) {
     }
 
     const activationAdmin = await getWebhookAdminClient()
-    const activationUser = await findWhatsAppUser(activationAdmin, message.from)
+    const activationUser = activationAdmin
+      ? await findWhatsAppUser(activationAdmin, message.from)
+      : null
 
     /*
      * A ativação é resolvida antes do claim inbound. Em awaiting_password,
