@@ -36,6 +36,78 @@ function activationLog(event: string, details: Record<string, unknown> = {}) {
   console.error(`[WA ACTIVATION] ${event}`, details)
 }
 
+const DEFAULT_CATEGORY_SEEDS = [
+  { name: 'Alimentação', color: '#F59E0B' },
+  { name: 'Moradia', color: '#8B5CF6' },
+  { name: 'Transporte', color: '#0EA5E9' },
+  { name: 'Saúde', color: '#10B981' },
+  { name: 'Lazer', color: '#EC4899' },
+]
+
+function normalizedCategoryName(name: string) {
+  return name.trim().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase()
+}
+
+async function ensureFinancialBootstrap(admin: Admin, userId: string) {
+  activationLog('bootstrap_started')
+
+  const { data: profile, error: profileError } = await admin
+    .from('profiles')
+    .select('id, display_name, onboarding_completed, onboarding_skipped, preferences')
+    .eq('id', userId)
+    .maybeSingle()
+  if (profileError) {
+    activationLog('bootstrap_profile_lookup_failed', safeError(profileError))
+    return false
+  }
+  if (!profile) {
+    const { error } = await admin.from('profiles').insert({ id: userId })
+    if (error) {
+      activationLog('bootstrap_profile_create_failed', safeError(error))
+      return false
+    }
+  }
+
+  const { count: accountCount, error: accountCountError } = await admin
+    .from('accounts')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+  if (accountCountError) {
+    activationLog('bootstrap_account_count_failed', safeError(accountCountError))
+    return false
+  }
+  if ((accountCount ?? 0) === 0) {
+    const { error } = await admin.from('accounts').insert({ user_id: userId, name: 'Conta Principal' })
+    if (error) {
+      activationLog('bootstrap_account_create_failed', safeError(error))
+      return false
+    }
+  }
+
+  for (const seed of DEFAULT_CATEGORY_SEEDS) {
+    const normalized = normalizedCategoryName(seed.name)
+    const { data: existing, error: lookupError } = await admin
+      .from('categories')
+      .select('id, name')
+      .eq('user_id', userId)
+    if (lookupError) {
+      activationLog('bootstrap_category_lookup_failed', safeError(lookupError))
+      return false
+    }
+    const alreadyExists = (existing ?? []).some((category) => normalizedCategoryName(category.name) === normalized)
+    if (!alreadyExists) {
+      const { error } = await admin.from('categories').insert({ user_id: userId, name: seed.name, color: seed.color })
+      if (error) {
+        activationLog('bootstrap_category_create_failed', safeError(error))
+        return false
+      }
+    }
+  }
+
+  activationLog('bootstrap_success')
+  return true
+}
+
 async function getSession(admin: Admin, waId: string) {
   const { data, error } = await admin
     .from('whatsapp_activation_sessions')
@@ -196,6 +268,9 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
     .maybeSingle()
   activationLog('subscription_link_success=' + String(!subscriptionLinkError && Boolean(linkedSubscription)), subscriptionLinkError ? safeError(subscriptionLinkError) : {})
   if (subscriptionLinkError || !linkedSubscription) return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
+
+  const bootstrapReady = await ensureFinancialBootstrap(admin, authUser.id)
+  if (!bootstrapReady) return { ok: false as const, message: 'Seu acesso foi criado, mas não consegui preparar o espaço financeiro. Tente novamente.' }
 
   activationLog('session_complete_started')
   const { error: sessionCompleteError } = await admin.from('whatsapp_activation_sessions').update({ state: 'completed', customer_email: null, metadata: {}, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', session.id).in('state', ['awaiting_email', 'awaiting_password'])
