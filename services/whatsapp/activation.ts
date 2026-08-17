@@ -82,13 +82,13 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
   const passwordPolicyValid = password.length >= 8 && password.length <= 128 && /[A-Za-z]/.test(password) && /[0-9]/.test(password)
   activationLog('password_policy_valid=' + String(passwordPolicyValid))
   if (!passwordPolicyValid) return { ok: false as const, message: 'A senha deve ter entre 8 e 128 caracteres, com pelo menos uma letra e um número. Envie outra senha.' }
-  const email = session.customer_email
-  if (!sessionValid || !email) return { ok: false as const, message: 'Não consegui validar o e-mail. Reinicie a ativação.' }
+  const normalizedEmail = session.customer_email?.trim().toLowerCase()
+  if (!sessionValid || !normalizedEmail) return { ok: false as const, message: 'Não consegui validar o e-mail. Reinicie a ativação.' }
 
   const { data: subscription, error: subscriptionLookupError } = await admin
     .from('subscriptions')
     .select('id, user_id, customer_email, status, expires_at')
-    .ilike('customer_email', email)
+    .ilike('customer_email', normalizedEmail)
     .eq('status', 'active')
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -111,25 +111,25 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
       if (result.error) activationLog('auth_lookup_error', safeError(result.error))
       existing = result.data.user
     } else {
-      existing = await findAuthUserByEmail(admin, email)
+      existing = await findAuthUserByEmail(admin, normalizedEmail)
     }
   } catch (error) {
     activationLog('auth_lookup_error', safeError(error))
   }
   activationLog('existing_auth_found=' + String(Boolean(existing)))
-  if (existing?.email?.toLowerCase() !== email) {
+  if (existing && existing.email?.toLowerCase() !== normalizedEmail) {
     await closeSession(admin, session, 'failed')
     return { ok: false as const, message: 'Não foi possível validar esta ativação. Verifique os dados e tente novamente.' }
   }
   let authUser = existing
   if (!authUser) {
     activationLog('auth_create_started')
-    const created = await admin.auth.admin.createUser({ email, password, email_confirm: true })
+    const created = await admin.auth.admin.createUser({ email: normalizedEmail, password, email_confirm: true })
     activationLog('auth_create_success=' + String(!created.error), created.error ? safeError(created.error) : {})
     if (created.error) {
-      const recovered = await findAuthUserByEmail(admin, email)
+      activationLog('auth_error_code=' + safeError(created.error).errorCode)
+      const recovered = await findAuthUserByEmail(admin, normalizedEmail)
       if (!recovered) {
-        await closeSession(admin, session, 'failed')
         return { ok: false as const, message: 'Não consegui concluir a ativação agora. Tente novamente.' }
       }
       authUser = recovered
@@ -229,7 +229,7 @@ export async function handleActivationMessage(admin: Admin | null, waId: string,
   if (current?.state === 'awaiting_email') {
     const email = normalizeEmail(text)
     if (!isEmail(email)) return { handled: true as const, reply: 'Envie o e-mail usado na compra para continuar a ativação.' }
-    const { data: subscription } = await admin.from('subscriptions').select('id').ilike('customer_email', email).eq('status', 'active').limit(1).maybeSingle()
+    const { data: subscription } = await admin.from('subscriptions').select('id').ilike('customer_email', normalizedEmail).eq('status', 'active').limit(1).maybeSingle()
     if (!subscription) return { handled: true as const, reply: 'Não consegui validar esse e-mail de compra. Confira e envie novamente.' }
     const { data, error } = await admin.from('whatsapp_activation_sessions').update({ customer_email: email, state: 'awaiting_password', updated_at: new Date().toISOString() }).eq('id', current.id).eq('state', 'awaiting_email').select('id').maybeSingle()
     if (error || !data) return { handled: true as const, reply: 'Não foi possível iniciar a ativação. Tente novamente.' }
