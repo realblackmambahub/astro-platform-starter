@@ -45,7 +45,7 @@ const DEFAULT_CATEGORY_SEEDS = [
 ]
 
 function normalizedCategoryName(name: string) {
-  return name.trim().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase()
+  return name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
 async function ensureFinancialBootstrap(admin: Admin, userId: string) {
