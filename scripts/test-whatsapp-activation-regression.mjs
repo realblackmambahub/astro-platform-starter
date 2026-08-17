@@ -13,6 +13,9 @@ const assertions = [
   ['missing Auth user reaches createUser', activation.includes("if (existing && existing.email?.toLowerCase() !== normalizedEmail)") && activation.includes("createUser({ email: normalizedEmail, password, email_confirm: true })")],
   ['Auth create conflict retries lookup', activation.includes("const recovered = await findAuthUserByEmail(admin, normalizedEmail)")],
   ['Auth create failure preserves retry session', !activation.includes("if (!recovered) {\n        await closeSession(admin, session, 'failed')")],
+  ['awaiting password recovers normalized email from session', activation.includes("const normalizedEmail = session.customer_email?.trim().toLowerCase()") && activation.includes("if (!sessionValid || !normalizedEmail)")],
+  ['awaiting email uses its local normalized email', activation.includes("const email = normalizeEmail(text)") && activation.includes(".ilike('customer_email', email)")],
+  ['activation runtime errors stay out of finance flow', route.includes("activation failed before finance flow") && route.includes('Tente novamente.')],
   ['completed session clears transient data', activation.includes('metadata: {}') && activation.includes("state,\n    customer_email: customerEmail ?? null")],
   ['concurrent activation is protected by active email index', true],
 ]

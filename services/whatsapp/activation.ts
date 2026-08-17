@@ -229,7 +229,7 @@ export async function handleActivationMessage(admin: Admin | null, waId: string,
   if (current?.state === 'awaiting_email') {
     const email = normalizeEmail(text)
     if (!isEmail(email)) return { handled: true as const, reply: 'Envie o e-mail usado na compra para continuar a ativação.' }
-    const { data: subscription } = await admin.from('subscriptions').select('id').ilike('customer_email', normalizedEmail).eq('status', 'active').limit(1).maybeSingle()
+    const { data: subscription } = await admin.from('subscriptions').select('id').ilike('customer_email', email).eq('status', 'active').limit(1).maybeSingle()
     if (!subscription) return { handled: true as const, reply: 'Não consegui validar esse e-mail de compra. Confira e envie novamente.' }
     const { data, error } = await admin.from('whatsapp_activation_sessions').update({ customer_email: email, state: 'awaiting_password', updated_at: new Date().toISOString() }).eq('id', current.id).eq('state', 'awaiting_email').select('id').maybeSingle()
     if (error || !data) return { handled: true as const, reply: 'Não foi possível iniciar a ativação. Tente novamente.' }

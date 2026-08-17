@@ -590,15 +590,26 @@ export async function POST(request: Request) {
      * A ativação é resolvida antes do claim inbound. Em awaiting_password,
      * a senha nunca entra em whatsapp_messages nem no pipeline financeiro.
      */
-    if (activationAdmin && !activationUser) {
-      const activation = await handleActivationMessage(activationAdmin, message.from, message.text)
-      if (activation.handled) {
-        const outbound = await sendWhatsAppTextMessage(message.from, activation.reply)
-        if (outbound.ok) await recordOutbound(activationAdmin, outbound.messageId, message.from)
-        processed += 1
-        continue
-      }
+  if (activationAdmin && !activationUser) {
+    let activation: Awaited<ReturnType<typeof handleActivationMessage>>
+    try {
+      activation = await handleActivationMessage(activationAdmin, message.from, message.text)
+    } catch (error) {
+      console.error('[KEVO WhatsApp] activation failed before finance flow', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      const outbound = await sendWhatsAppTextMessage(message.from, 'Não foi possível processar a ativação agora. Tente novamente.')
+      if (outbound.ok) await recordOutbound(activationAdmin, outbound.messageId, message.from)
+      processed += 1
+      continue
     }
+    if (activation.handled) {
+      const outbound = await sendWhatsAppTextMessage(message.from, activation.reply)
+      if (outbound.ok) await recordOutbound(activationAdmin, outbound.messageId, message.from)
+      processed += 1
+      continue
+    }
+  }
 
     const claim = await claimInboundMessage(
       message.messageId,
