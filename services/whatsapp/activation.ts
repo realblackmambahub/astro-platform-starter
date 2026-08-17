@@ -37,7 +37,7 @@ function activationLog(event: string, details: Record<string, unknown> = {}) {
 }
 
 async function getSession(admin: Admin, waId: string) {
-  const { data } = await admin
+  const { data, error } = await admin
     .from('whatsapp_activation_sessions')
     .select('id, wa_id, customer_email, state, metadata, expires_at')
     .eq('wa_id', waId)
@@ -46,17 +46,22 @@ async function getSession(admin: Admin, waId: string) {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
+  activationLog(`session_lookup_success=${String(!error)}`, error ? { errorCode: safeError(error).errorCode, stage: 'session_lookup' } : {})
+  if (data) activationLog(`session_state=${data.state}`)
   return data as ActivationSession | null
 }
 
 async function closeSession(admin: Admin, session: ActivationSession, state: 'completed' | 'failed' | 'expired', customerEmail?: string | null) {
-  await admin.from('whatsapp_activation_sessions').update({
+  activationLog('session_cleanup_started')
+  activationLog(`session_cleanup_reason=${state}`)
+  const { error } = await admin.from('whatsapp_activation_sessions').update({
     state,
     customer_email: customerEmail ?? null,
     metadata: {},
     completed_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', session.id).in('state', ['awaiting_email', 'awaiting_password'])
+  if (error) activationLog('session_cleanup_failed', { errorCode: safeError(error).errorCode, stage: 'session_cleanup' })
 }
 
 async function findAuthUserByEmail(admin: Admin, email: string) {
@@ -231,7 +236,10 @@ export async function handleActivationMessage(admin: Admin | null, waId: string,
     return { handled: true as const, reply: 'E-mail validado. Agora envie uma senha com pelo menos 8 caracteres para criar seu acesso seguro.' }
   }
 
+  activationLog('create_session_started')
   const { data: created, error } = await admin.from('whatsapp_activation_sessions').insert({ wa_id: waId, state: 'awaiting_email', expires_at: new Date(Date.now() + SESSION_TTL_MINUTES * 60_000).toISOString() }).select('id').maybeSingle()
+  activationLog(`create_session_success=${String(!error && Boolean(created))}`, error ? { errorCode: safeError(error).errorCode, stage: 'create_session' } : {})
+  activationLog(`session_id_present=${String(Boolean(created?.id))}`)
   if (error || !created) return { handled: true as const, reply: 'Não foi possível iniciar a ativação agora. Tente novamente.' }
   return { handled: true as const, reply: 'Para ativar seu WhatsApp, envie o e-mail usado na compra.' }
 }
