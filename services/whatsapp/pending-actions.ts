@@ -67,7 +67,11 @@ export async function createPendingAction(
 }
 
 export async function getPendingAction(admin: AdminClient | null, fromPhone: string, userId: string) {
-  if (!admin) return null
+  console.info('[WA ACTION] pending_lookup_started=true')
+  if (!admin) {
+    console.info('[WA ACTION] pending_lookup_found=false')
+    return null
+  }
   const { data } = await admin.from('whatsapp_messages')
     .select('wa_message_id, metadata, created_at, status')
     .eq('from_phone', fromPhone)
@@ -76,15 +80,26 @@ export async function getPendingAction(admin: AdminClient | null, fromPhone: str
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
-  if (!data || !['pending_edit', 'pending_delete'].includes(data.status)) return null
+  if (!data || !['pending_edit', 'pending_delete'].includes(data.status)) {
+    console.info('[WA ACTION] pending_lookup_found=false')
+    return null
+  }
+  console.info('[WA ACTION] pending_lookup_found=true')
+  console.info(`[WA ACTION] pending_type=${data.status}`)
   const metadata = asMetadata(data.metadata)
   const transactionId = metadata?.transaction_id
   const expiresAt = metadata?.expires_at
-  if (!isTransactionId(transactionId) || typeof expiresAt !== 'string') return null
-  if (Date.now() >= Date.parse(expiresAt)) {
+  if (!isTransactionId(transactionId) || typeof expiresAt !== 'string') {
+    console.info('[WA ACTION] pending_owned=false')
+    return null
+  }
+  const expired = Date.now() >= Date.parse(expiresAt)
+  console.info(`[WA ACTION] pending_expired=${String(expired)}`)
+  if (expired) {
     await consumePendingAction(admin, data.wa_message_id, 'expired')
     return null
   }
+  console.info('[WA ACTION] pending_owned=true')
   return {
     actionType: data.status as PendingActionType,
     transactionId,
@@ -100,26 +115,32 @@ export async function consumePendingAction(admin: AdminClient | null, messageId:
   const metadata = asMetadata(data?.metadata) ?? {}
   const nextMetadata = { ...metadata, consumed_at: new Date().toISOString(), consumed_reason: reason }
   const { error } = await admin.from('whatsapp_messages').update({ status: 'processed', metadata: nextMetadata, processed_at: new Date().toISOString() }).eq('wa_message_id', messageId).eq('direction', 'inbound')
+  console.info(`[WA ACTION] pending_consumed=${String(!error)}`)
   return !error
 }
 
-export function parseEditFields(text: string): Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> | null {
+export function parseEditFields(text: string): Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> & { categoryName?: string } | null {
   const value = text.trim()
-  const amountMatch = value.match(/(?:r\$?\s*)?(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real|r\$)?/i)
+  const amountMatch = value.match(/(?:valor\s*(?:para|de)?\s*|r\$?\s*)(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real|r\$)?/i) ?? value.match(/\b(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real|r\$)\b/i)
   const dateMatch = value.match(/(?:dia|data)\s+(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?/i)
-  const descriptionMatch = value.match(/(?:descrição|descricao|nome|para)\s*[:=-]?\s*([\p{L}\d][\p{L}\d\s-]{1,80})/iu)
-  const next: Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> = {}
+  const relativeDate = /\bontem\b/i.test(value) ? new Date(Date.now() - 86400000) : null
+  const descriptionMatch = value.match(/(?:descrição|descricao|nome)\s*(?:para|:|=|-)?\s*([\p{L}][\p{L}\d\s-]{1,80})/iu)
+  const categoryMatch = value.match(/categoria\s*(?:para|:|=|-)?\s*([\p{L}][\p{L}\s-]{1,60})/iu)
+  const next: Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> & { categoryName?: string } = {}
   if (amountMatch) {
     const amount = Number(amountMatch[1].replace(',', '.'))
     if (Number.isFinite(amount) && amount > 0 && amount <= 100000000) next.amount = Number(amount.toFixed(2))
   }
   if (descriptionMatch) next.description = descriptionMatch[1].trim().replace(/\s+/g, ' ')
+  if (categoryMatch) next.categoryName = categoryMatch[1].trim().replace(/\s+/g, ' ')
+  if (relativeDate) next.transactionDate = relativeDate.toISOString().slice(0, 10)
   if (dateMatch) {
     const year = dateMatch[3] ? (dateMatch[3].length === 2 ? `20${dateMatch[3]}` : dateMatch[3]) : String(new Date().getUTCFullYear())
     const iso = `${year}-${dateMatch[2].padStart(2, '0')}-${dateMatch[1].padStart(2, '0')}`
     const date = new Date(`${iso}T00:00:00Z`)
     if (!Number.isNaN(date.valueOf()) && date.getUTCMonth() + 1 === Number(dateMatch[2]) && date.getUTCDate() === Number(dateMatch[1])) next.transactionDate = iso
   }
+  console.info(`[WA ACTION] edit_fields_detected=${String(Object.keys(next).length > 0)}`)
   return Object.keys(next).length ? next : null
 }
 

@@ -37,6 +37,11 @@ const assertions = [
   ['pending action metadata is minimal and expires', pending.includes('action_type') && pending.includes('transaction_id') && pending.includes('expires_at') && pending.includes('consumed_at') && pending.includes('PENDING_TTL_MS')],
   ['ownership is checked before mutations', route.includes(".eq('id', transactionId).eq('user_id', user.id)") && route.includes(".eq('id', payload.transactionId).eq('user_id', linkedUser.id)")],
   ['actions are consumed after safe mutation', route.includes("consumePendingAction(claim.admin, pending.messageId, 'consumed')")],
+  ['pending instrumentation covers lookup and edit path', pending.includes('pending_lookup_started=true') && pending.includes('pending_lookup_found=true') && pending.includes('pending_expired=') && pending.includes('pending_owned=') && pending.includes('edit_fields_detected=')],
+  ['deterministic edit avoids Gemini and fallback', route.includes('const intent = pending ? null : parseFinanceIntent(message.text)') && route.includes('edit_update_attempted=true') && route.includes('edit_update_success=false') && route.includes('[WA ACTION] fallback_reached=true')],
+  ['edit parser supports amount, category and yesterday', pending.includes('valor\\s*(?:para|de)?') && pending.includes('categoryName') && pending.includes('ontem')],
+  ['latency is measured by stage', route.includes('[WA PERF] webhook_start') && route.includes('user_resolved_ms=') && route.includes('pending_lookup_ms=') && route.includes('edit_parse_ms=') && route.includes('transaction_update_ms=') && route.includes('whatsapp_send_ms=') && route.includes('total_ms=')],
+  ['fallback location is explicit and last', route.includes("const generated = await createReply(message.text)") && route.includes("Olá! Eu sou a KEVO. Sua mensagem foi recebida com sucesso.")],
 ]
 
 for (const [name, passed] of assertions) {

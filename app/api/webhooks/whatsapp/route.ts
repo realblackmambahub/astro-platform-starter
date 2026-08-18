@@ -316,11 +316,10 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
   return { ok: true as const, transactionId: data.id, duplicate: false as const, categoryName, persisted: { ...data, description: persistedDescription, amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate, category_id: category?.id ?? null } }
 }
 
-async function updateOwnedTransaction(admin: WebhookAdminClient, phone: string, transactionId: string, fields: Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>>) {
+async function updateOwnedTransaction(admin: WebhookAdminClient, userId: string, transactionId: string, fields: Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> & { categoryName?: string }) {
+  console.info('[WA ACTION] edit_update_attempted=true')
   if (!admin || !/^[0-9a-f-]{36}$/i.test(transactionId)) return { ok: false as const, reason: 'invalid_request' as const }
-  const user = await findWhatsAppUser(admin, phone)
-  if (!user) return { ok: false as const, reason: 'user_not_found' as const }
-  const { data: existing, error: lookupError } = await admin.from('transactions').select('id, description, amount, type, transaction_date, category_id').eq('id', transactionId).eq('user_id', user.id).maybeSingle()
+  const { data: existing, error: lookupError } = await admin.from('transactions').select('id, description, amount, type, transaction_date, category_id').eq('id', transactionId).eq('user_id', userId).maybeSingle()
   if (lookupError || !existing) return { ok: false as const, reason: 'not_owned' as const }
   const patch: Record<string, unknown> = {}
   if (fields.description) patch.description = normalizeTransactionDescription(fields.description)
@@ -330,9 +329,17 @@ async function updateOwnedTransaction(admin: WebhookAdminClient, phone: string, 
     if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== fields.transactionDate) return { ok: false as const, reason: 'invalid_date' as const }
     patch.transaction_date = fields.transactionDate
   }
+  if (fields.categoryName) {
+    const { data: category } = await admin.from('categories').select('id').eq('user_id', userId).ilike('name', fields.categoryName).maybeSingle()
+    if (!category?.id) return { ok: false as const, reason: 'invalid_category' as const }
+    patch.category_id = category.id
+  }
   if (!Object.keys(patch).length) return { ok: false as const, reason: 'no_valid_fields' as const }
-  const { data: updated, error } = await admin.from('transactions').update(patch).eq('id', transactionId).eq('user_id', user.id).select('description, amount, transaction_date, type, category_id').maybeSingle()
-  if (error || !updated) return { ok: false as const, reason: 'update_failed' as const }
+  const { data: updated, error } = await admin.from('transactions').update(patch).eq('id', transactionId).eq('user_id', userId).select('description, amount, transaction_date, type, category_id').maybeSingle()
+  if (error || !updated) {
+    console.info('[WA ACTION] edit_update_success=false')
+    return { ok: false as const, reason: 'update_failed' as const }
+  }
   console.info('[WA ACTION] edit_update_success=true')
   return { ok: true as const, updated }
 }
@@ -696,17 +703,24 @@ export async function POST(request: Request) {
     })
 
     try {
+      const webhookStartedAt = Date.now()
+      console.info('[WA PERF] webhook_start')
       const user = findWhatsAppUser(claim.admin, message.from)
       let reply: string
       let generatedByAi = false
 
       const linkedUser = await user
+      console.info(`[WA PERF] user_resolved_ms=${Date.now() - webhookStartedAt}`)
       let transactionId: string | undefined
       let categoryName = 'Sem categoria'
       let actionButtons: Array<{ id: string; title: string }> | undefined
       const payload = parseActionPayload(message.text)
+      const pendingLookupStartedAt = Date.now()
       const pending = linkedUser ? await getPendingAction(claim.admin, message.from, linkedUser.id) : null
-      const intent = parseFinanceIntent(message.text)
+      console.info(`[WA PERF] pending_lookup_ms=${Date.now() - pendingLookupStartedAt}`)
+      const editParseStartedAt = Date.now()
+      const intent = pending ? null : parseFinanceIntent(message.text)
+      console.info(`[WA PERF] edit_parse_ms=${Date.now() - editParseStartedAt}`)
 
       if (!linkedUser) {
         reply = 'Não encontrei uma conta KEVO vinculada a este número.'
@@ -765,11 +779,14 @@ export async function POST(request: Request) {
         const fields = parseEditFields(message.text)
         if (!fields) reply = buildPendingEditReply()
         else {
-          const updated = await updateOwnedTransaction(claim.admin, message.from, pending.transactionId, fields)
-          if (!updated.ok) reply = updated.reason === 'not_owned' ? 'Não encontrei essa transação na sua conta.' : 'Não consegui aplicar uma alteração válida. Tente informar valor, descrição ou data.'
+          const updateStartedAt = Date.now()
+          const updated = await updateOwnedTransaction(claim.admin, linkedUser.id, pending.transactionId, fields)
+          console.info(`[WA PERF] transaction_update_ms=${Date.now() - updateStartedAt}`)
+          if (!updated.ok) reply = updated.reason === 'not_owned' ? 'Não encontrei essa transação na sua conta.' : 'Não consegui aplicar uma alteração válida. Tente informar valor, descrição, categoria ou data.'
           else {
-            await consumePendingAction(claim.admin, pending.messageId, 'consumed')
-            reply = `Transação atualizada com sucesso.\n\n*Descrição:* ${updated.updated.description}\n*Valor:* ${formatAmount(Number(updated.updated.amount))}\n*Data:* ${formatDate(String(updated.updated.transaction_date))}`
+            const consumed = await consumePendingAction(claim.admin, pending.messageId, 'consumed')
+            console.info(`[WA ACTION] pending_consumed=${String(consumed)}`)
+            reply = `Pronto! Atualizei sua transação.\n\n🧾 *Resumo da transação atualizada:*\n\n📝 *Descrição:* ${updated.updated.description}\n💰 *Valor:* ${formatAmount(Number(updated.updated.amount))}\n🏷️ *Categoria:* ${fields.categoryName ?? 'Sem alteração'}\n📅 *Data:* ${formatDate(String(updated.updated.transaction_date))}\n\n✅ *Status:* Atualizado com sucesso`
             transactionId = pending.transactionId
             actionButtons = [
               { id: `edit_transaction:${transactionId}`, title: 'Editar transação' },
@@ -797,11 +814,13 @@ export async function POST(request: Request) {
           reply = 'Não consegui registrar agora. Nenhuma alteração financeira foi feita.'
         }
       } else {
+        console.info('[WA ACTION] fallback_reached=true')
         const generated = await createReply(message.text)
         reply = generated.reply
         generatedByAi = generated.generatedByAi
       }
 
+      console.info('[WA ACTION] fallback_reached=false')
       console.info('[KEVO WhatsApp] outbound attempt started', {
         destination: maskPhone(message.from),
         generatedByAi,
@@ -813,9 +832,11 @@ export async function POST(request: Request) {
             { id: `delete_transaction:${transactionId}`, title: 'Excluir transação' },
           ]
         : undefined)
+      const whatsappSendStartedAt = Date.now()
       const result = buttons
         ? await sendWhatsAppInteractiveMessage(message.from, reply, buttons)
         : await sendWhatsAppTextMessage(message.from, reply)
+      console.info(`[WA PERF] whatsapp_send_ms=${Date.now() - whatsappSendStartedAt}`)
 
       if (!result.ok) {
         console.error('[KEVO WhatsApp] outbound failed', {
@@ -842,6 +863,7 @@ export async function POST(request: Request) {
       )
 
       processed += 1
+      console.info(`[WA PERF] total_ms=${Date.now() - webhookStartedAt}`)
 
       console.info('[KEVO WhatsApp] outbound accepted by Meta', {
         messageId: result.messageId,
