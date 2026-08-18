@@ -19,6 +19,9 @@ const assertions = [
   ['finance self-heals missing accounts', route.includes('ensureFinancialBootstrap(admin, userId)') && route.includes("reason: 'account_required'")],
   ['finance logs sanitized resolution stages', route.includes('[WA FINANCE] user_resolved=true') && route.includes('[WA FINANCE] account_resolved=')],
   ['finance stays scoped to resolved user', route.includes(".from('accounts').select('id, name').eq('user_id', userId)") && route.includes(".from('transactions').insert({")],
+  ['confirmation uses real line breaks', route.includes('🧾 *Resumo da transação:*\n\n📝') && !route.includes('`${greeting}\\n')],
+  ['confirmation hides internal button payloads', !route.includes('[Editar transação: edit_transaction:') && !route.includes('[Excluir transação: delete_transaction:') && route.includes("id: `edit_transaction:${transactionId}`") && route.includes("id: `delete_transaction:${transactionId}`")],
+  ['confirmation contains real transaction fields', route.includes('💰 *Valor:* ${formatAmount(intent.amount)}') && route.includes('🏷️ *Categoria:* ${categoryName}') && route.includes('📅 *Data:* ${formatDate(intent.transactionDate)}') && route.includes('✅ *Status:* Registrado com sucesso')],
   ['completed session clears transient data', activation.includes('metadata: {}') && activation.includes("state,\n    customer_email: customerEmail ?? null")],
   ['concurrent activation is protected by active email index', true],
 ]

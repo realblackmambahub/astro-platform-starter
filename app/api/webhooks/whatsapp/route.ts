@@ -394,11 +394,24 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`))
 }
 
-function buildTransactionConfirmation(displayName: string | null, intent: FinanceIntent, categoryName: string, transactionId?: string) {
-  const firstName = displayName?.trim().split(/\\s+/)[0] || 'você'
-  const greeting = `Olá, ${firstName}! Sua movimentação foi registrada por aqui.`
-  const actions = transactionId ? `\\n[Editar transação: edit_transaction:${transactionId}]\\n[Excluir transação: delete_transaction:${transactionId}]` : ''
-  return `${greeting}\\n\\n🧾 *Resumo da transação:*\\n\\n*Descrição:* ${intent.description}\\n*Valor:* ${formatAmount(intent.amount)}\\n*Categoria:* ${categoryName}\\n*Data:* ${formatDate(intent.transactionDate)}\\n\\n✅ *Status:* Registrado com sucesso\\n\\n📊 Para visualizar mais detalhes e relatórios, acesse seu painel KEVO:\\nhttps://panel.kevoia.com\\n\\nSe precisar de algo a mais, é só me chamar!${actions}`
+function buildTransactionConfirmation(displayName: string | null, intent: FinanceIntent, categoryName: string) {
+  const firstName = displayName?.trim().split(/\s+/)[0]
+  const greeting = firstName ? `Olá, ${firstName}! Sua movimentação foi registrada por aqui.` : 'Olá! Sua movimentação foi registrada por aqui.'
+  return `${greeting}
+
+🧾 *Resumo da transação:*
+
+📝 *Descrição:* ${intent.description}
+💰 *Valor:* ${formatAmount(intent.amount)}
+🏷️ *Categoria:* ${categoryName}
+📅 *Data:* ${formatDate(intent.transactionDate)}
+
+✅ *Status:* Registrado com sucesso
+
+📊 Para visualizar mais detalhes e relatórios, acesse seu painel:
+https://panel.kevoia.com
+
+Se precisar de algo a mais, é só me chamar! 😊`
 }
 
 async function createReply(message: string) {
@@ -687,7 +700,7 @@ export async function POST(request: Request) {
         if (result.ok) {
           transactionId = result.transactionId
           categoryName = result.categoryName
-          reply = buildTransactionConfirmation(linkedUser.display_name, intent, categoryName, transactionId)
+          reply = buildTransactionConfirmation(linkedUser.display_name, intent, categoryName)
         } else if (result.reason === 'multiple_accounts') {
           await saveMissingAccountIntent(claim.admin, message.messageId, linkedUser.id, intent)
           reply = 'Encontrei mais de uma conta ativa no KEVO. Qual conta devo usar para registrar essa movimentação?'

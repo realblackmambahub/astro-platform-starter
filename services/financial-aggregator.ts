@@ -15,9 +15,12 @@ export async function getFinancialSnapshot(period = '6M'): Promise<FinancialSnap
   const supabase = createClient()
   const { data: auth, error: authError } = await supabase.auth.getUser()
   if (authError || !auth.user) throw new Error('AUTH_REQUIRED')
-  const months = period === '1A' ? 12 : period === '6M' ? 6 : period === '3M' ? 3 : period === '30D' ? 1 : 1
   const from = new Date()
-  from.setMonth(from.getMonth() - months)
+  if (period === '7D') from.setDate(from.getDate() - 7)
+  else if (period === '30D') from.setDate(from.getDate() - 30)
+  else if (period === '3M') from.setMonth(from.getMonth() - 3)
+  else if (period === '6M') from.setMonth(from.getMonth() - 6)
+  else from.setFullYear(from.getFullYear() - 1)
   const results = await Promise.all(tables.map((table) => {
     const query = supabase.from(table).select('*').eq('user_id', auth.user.id).order(table === 'transactions' ? 'transaction_date' : 'created_at', { ascending: false }).limit(table === 'transactions' ? 500 : 100)
     return table === 'transactions' ? query.gte('transaction_date', from.toISOString().slice(0, 10)) : query
