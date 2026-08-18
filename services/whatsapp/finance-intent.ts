@@ -1,5 +1,3 @@
-import 'server-only'
-
 export type FinanceIntent = {
   type: 'income' | 'expense'
   amount: number
@@ -9,6 +7,15 @@ export type FinanceIntent = {
 }
 
 const AMOUNT_PATTERN = /(?:r\$\s*)?([\d.]+(?:,\d{1,2})?|[\d]+(?:\.\d{1,2})?)/i
+const NUMBER_WORDS: Record<string, number> = {
+  zero: 0, um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9,
+  dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezasseis: 16, dezessete: 17, dezoito: 18, dezenove: 19,
+  vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70, oitenta: 80, noventa: 90,
+  cem: 100, cento: 100, duzentos: 200, duzentas: 200, trezentos: 300, trezentas: 300, quatrocentos: 400, quatrocentas: 400,
+  quinhentos: 500, quinhentas: 500, seiscentos: 600, seiscentas: 600, setecentos: 700, setecentas: 700, oitocentos: 800, oitocentas: 800, novecentos: 900,
+}
+const WRITTEN_NUMBER_TOKEN = Object.keys(NUMBER_WORDS).join('|')
+const WRITTEN_AMOUNT_PATTERN = new RegExp(`\\b((?:${WRITTEN_NUMBER_TOKEN}|mil)(?:\\s+(?:e\\s+)?(?:${WRITTEN_NUMBER_TOKEN}|mil)){0,8})(?:\\s+(?:reais?|real))?(?:\\s+e\\s+((?:${WRITTEN_NUMBER_TOKEN})(?:\\s+e\\s+(?:${WRITTEN_NUMBER_TOKEN})){0,3})\\s+centavos?)?\\b`, 'i')
 const EXPENSE_PATTERN = /\b(gastei|paguei|comprei|despesa|saiu|pagamento)\b/i
 const INCOME_PATTERN = /\b(recebi|ganhei|entrou|renda|salário|salario|vendi|receita)\b/i
 
@@ -56,26 +63,55 @@ export function inferCategoryCandidate(description: string, type: FinanceIntent[
   return groups.find((group) => group.terms.some((term) => text.includes(term)))?.name ?? null
 }
 
+function parseWrittenInteger(value: string) {
+  const tokens = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/\s+e\s+|\s+/).filter(Boolean)
+  let total = 0
+  let current = 0
+  for (const token of tokens) {
+    if (token === 'mil') {
+      total += (current || 1) * 1000
+      current = 0
+      continue
+    }
+    const number = NUMBER_WORDS[token]
+    if (number === undefined) return null
+    if (number >= 100) current = current ? current + number : number
+    else current += number
+  }
+  const result = total + current
+  return Number.isFinite(result) && result > 0 ? result : null
+}
+
 function parseAmount(text: string) {
-  const match = text.match(AMOUNT_PATTERN)
-  if (!match) return null
-  const raw = match[1]
-  const normalized = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw
-  const amount = Number(normalized)
-  return Number.isFinite(amount) && amount > 0 ? amount : null
+  const numericMatch = text.match(AMOUNT_PATTERN)
+  if (numericMatch) {
+    const raw = numericMatch[1]
+    const normalized = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw
+    const amount = Number(normalized)
+    if (Number.isFinite(amount) && amount > 0) return { amount, raw: numericMatch[0] }
+  }
+  const normalizedText = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const writtenMatch = normalizedText.match(WRITTEN_AMOUNT_PATTERN)
+  if (!writtenMatch) return null
+  const integer = parseWrittenInteger(writtenMatch[1])
+  if (!integer) return null
+  const cents = writtenMatch[2] ? parseWrittenInteger(writtenMatch[2]) : 0
+  if (cents === null || cents > 99) return null
+  return { amount: integer + (cents / 100), raw: writtenMatch[0] }
 }
 
 export function parseFinanceIntent(text: string, options?: { source?: 'text' | 'audio' }): FinanceIntent | null {
   console.info(`[WA DISPATCH] source=${options?.source ?? 'text'}`)
-  const amount = parseAmount(text)
-  if (!amount) return null
+  const parsedAmount = parseAmount(text)
+  if (!parsedAmount) return null
+  const amount = parsedAmount.amount
 
   const isExpense = EXPENSE_PATTERN.test(text)
   const isIncome = INCOME_PATTERN.test(text)
   if (isExpense === isIncome) return null
 
   const cleaned = text
-    .replace(AMOUNT_PATTERN, '')
+    .replace(new RegExp(parsedAmount.raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '')
     .replace(EXPENSE_PATTERN, '')
     .replace(INCOME_PATTERN, '')
     .replace(/\b(reais?|r\$|no|na|em|de|com|por|do|da)\b/gi, ' ')
