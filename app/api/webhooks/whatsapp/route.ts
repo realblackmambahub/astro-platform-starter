@@ -62,7 +62,7 @@ type WhatsAppChange = {
           title?: string
         }
       }
-      audio?: { id?: string; mime_type?: string }
+      audio?: { id?: string; mime_type?: string; voice?: boolean }
       image?: { id?: string; mime_type?: string; caption?: string }
       document?: { id?: string; mime_type?: string; filename?: string; caption?: string }
     }>
@@ -177,7 +177,7 @@ function extractTextMessages(
         .map((message) => {
           const messageType = message.type!
           const media = messageType === 'audio' ? message.audio : messageType === 'image' ? message.image : messageType === 'document' ? message.document : undefined
-          const mediaInput = media?.id && ['audio', 'image', 'document'].includes(messageType) ? { kind: messageType as MediaInput['kind'], mediaId: media.id, mimeType: media.mime_type, fileName: 'filename' in media ? String(media.filename ?? '') : undefined } : undefined
+          const mediaInput = media?.id && ['audio', 'image', 'document'].includes(messageType) ? { kind: messageType as MediaInput['kind'], mediaId: media.id, mimeType: media.mime_type, voice: messageType === 'audio' ? Boolean(message.audio?.voice) : undefined, fileName: 'filename' in media ? String(media.filename ?? '') : undefined } : undefined
           return {
             messageId: message.id!,
             from: message.from!,
@@ -742,7 +742,11 @@ export async function POST(request: Request) {
       const mediaStartedAt = Date.now()
       const mediaExtraction = message.media ? await processWhatsAppMedia(message.media) : null
       const mediaText = mediaExtraction ? mediaExtractionToText(mediaExtraction) : ''
-      if (message.media) console.info(`[WA MEDIA] finance_processing_ms=${Date.now() - mediaStartedAt}`)
+      if (message.media) {
+        const mediaDuration = Date.now() - mediaStartedAt
+        console.info(`[WA ${message.media.kind.toUpperCase()}] financial_processing_ms=${mediaDuration}`)
+        console.info(`[WA ${message.media.kind.toUpperCase()}] total_ms=${mediaDuration}`)
+      }
       const effectiveMessageText = mediaText || message.text
       const mediaUnavailable = Boolean(message.media && !mediaText)
       const editParseStartedAt = Date.now()
@@ -752,7 +756,7 @@ export async function POST(request: Request) {
       if (!linkedUser) {
         reply = 'Não encontrei uma conta KEVO vinculada a este número.'
       } else if (mediaUnavailable) {
-        reply = message.type === 'audio' ? 'Não consegui entender o áudio com segurança. Envie novamente com o valor e o estabelecimento, por favor.' : 'Não consegui extrair dados financeiros com segurança desta mídia. Confira o recibo e envie uma mensagem com valor e estabelecimento.'
+        reply = message.type === 'audio' ? 'Não consegui entender o áudio com segurança. Envie novamente ou escreva a mensagem, por favor.' : 'Não consegui extrair dados financeiros com segurança desta mídia. Confira o recibo e envie uma mensagem com valor e estabelecimento.'
       } else if (payload?.action === 'edit_transaction') {
         const owned = await claim.admin?.from('transactions').select('id').eq('id', payload.transactionId).eq('user_id', linkedUser.id).maybeSingle()
         if (!owned?.data?.id) reply = 'Não encontrei essa transação na sua conta.'
