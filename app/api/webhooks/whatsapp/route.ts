@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 import { sendWhatsAppTextMessage } from '@/services/whatsapp/send-message'
 import { sendWhatsAppInteractiveMessage } from '@/services/whatsapp/send-interactive'
 import { generateWhatsAppReply } from '@/services/whatsapp/gemini-reply'
+import { isSupportedMedia, mediaExtractionToText, processWhatsAppMedia, type MediaInput } from '@/services/whatsapp/media-processing'
 import { getWebhookAdminClient } from '@/services/subscription-access'
 import { ensureFinancialBootstrap, handleActivationMessage } from '@/services/whatsapp/activation'
 import {
@@ -61,6 +62,9 @@ type WhatsAppChange = {
           title?: string
         }
       }
+      audio?: { id?: string; mime_type?: string }
+      image?: { id?: string; mime_type?: string; caption?: string }
+      document?: { id?: string; mime_type?: string; filename?: string; caption?: string }
     }>
     statuses?: Array<{
       id?: string
@@ -83,6 +87,7 @@ type NormalizedTextMessage = {
   type: string
   text: string
   phoneNumberId: string
+  media?: MediaInput
 }
 
 function hasWebhookConfiguration() {
@@ -163,17 +168,26 @@ function extractTextMessages(
         .filter((message) =>
           (message.type === 'text' && Boolean(message.text?.body)) ||
           (message.type === 'interactive' && Boolean(message.interactive?.button_reply?.id)) ||
-          (message.type === 'button' && Boolean(message.button?.payload)),
+          (message.type === 'button' && Boolean(message.button?.payload)) ||
+          (message.type === 'audio' && Boolean(message.audio?.id)) ||
+          (message.type === 'image' && Boolean(message.image?.id)) ||
+          (message.type === 'document' && Boolean(message.document?.id)),
         )
         .filter((message) => Boolean(message.id) && Boolean(message.from))
-        .map((message) => ({
-          messageId: message.id!,
-          from: message.from!,
-          type: message.type === 'text' ? 'text' : 'button',
-          text: (message.text?.body || message.interactive?.button_reply?.id || message.button?.payload || '').trim(),
-          phoneNumberId,
-        }))
-        .filter((message) => message.text.length > 0)
+        .map((message) => {
+          const messageType = message.type!
+          const media = messageType === 'audio' ? message.audio : messageType === 'image' ? message.image : messageType === 'document' ? message.document : undefined
+          const mediaInput = media?.id && ['audio', 'image', 'document'].includes(messageType) ? { kind: messageType as MediaInput['kind'], mediaId: media.id, mimeType: media.mime_type, fileName: 'filename' in media ? String(media.filename ?? '') : undefined } : undefined
+          return {
+            messageId: message.id!,
+            from: message.from!,
+            type: messageType === 'text' ? 'text' : messageType,
+            text: (message.text?.body || message.interactive?.button_reply?.id || message.button?.payload || '').trim(),
+            phoneNumberId,
+            media: mediaInput,
+          }
+        })
+        .filter((message) => message.text.length > 0 || Boolean(message.media))
     }),
   )
 }
@@ -725,12 +739,20 @@ export async function POST(request: Request) {
       const pendingLookupStartedAt = Date.now()
       const pending = linkedUser ? await getPendingAction(claim.admin, message.from, linkedUser.id) : null
       console.info(`[WA PERF] pending_lookup_ms=${Date.now() - pendingLookupStartedAt}`)
+      const mediaStartedAt = Date.now()
+      const mediaExtraction = message.media ? await processWhatsAppMedia(message.media) : null
+      const mediaText = mediaExtraction ? mediaExtractionToText(mediaExtraction) : ''
+      if (message.media) console.info(`[WA MEDIA] finance_processing_ms=${Date.now() - mediaStartedAt}`)
+      const effectiveMessageText = mediaText || message.text
+      const mediaUnavailable = Boolean(message.media && !mediaText)
       const editParseStartedAt = Date.now()
-      const intent = pending ? null : parseFinanceIntent(message.text)
+      const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText)
       console.info(`[WA PERF] edit_parse_ms=${Date.now() - editParseStartedAt}`)
 
       if (!linkedUser) {
         reply = 'Não encontrei uma conta KEVO vinculada a este número.'
+      } else if (mediaUnavailable) {
+        reply = message.type === 'audio' ? 'Não consegui entender o áudio com segurança. Envie novamente com o valor e o estabelecimento, por favor.' : 'Não consegui extrair dados financeiros com segurança desta mídia. Confira o recibo e envie uma mensagem com valor e estabelecimento.'
       } else if (payload?.action === 'edit_transaction') {
         const owned = await claim.admin?.from('transactions').select('id').eq('id', payload.transactionId).eq('user_id', linkedUser.id).maybeSingle()
         if (!owned?.data?.id) reply = 'Não encontrei essa transação na sua conta.'
@@ -787,8 +809,8 @@ export async function POST(request: Request) {
         await consumePendingAction(claim.admin, pending.messageId, 'consumed')
         reply = 'Tudo certo. A edição foi cancelada e a transação permaneceu igual.'
       } else if (pending?.actionType === 'pending_edit') {
-        const fields = parseEditFields(message.text)
-        const looksLikeNewTransaction = /^(?:gastei|paguei|comprei|recebi|ganhei|entrou|saiu)\b/i.test(message.text.trim())
+        const fields = parseEditFields(effectiveMessageText)
+        const looksLikeNewTransaction = /^(?:gastei|paguei|comprei|recebi|ganhei|entrou|saiu)\b/i.test(effectiveMessageText.trim())
         if (!fields && looksLikeNewTransaction) reply = 'Você está editando uma transação. Quer alterar a transação atual ou registrar esse gasto como uma nova movimentação? Responda “cancelar” para sair.'
         else if (!fields) reply = buildPendingEditReply()
         else {

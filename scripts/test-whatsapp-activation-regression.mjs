@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 const route = await readFile(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
 const activation = await readFile(new URL('../services/whatsapp/activation.ts', import.meta.url), 'utf8')
 const pending = await readFile(new URL('../services/whatsapp/pending-actions.ts', import.meta.url), 'utf8')
+const media = await readFile(new URL('../services/whatsapp/media-processing.ts', import.meta.url), 'utf8')
 
 const assertions = [
   ['activation runs before inbound claim', route.indexOf('handleActivationMessage') < route.indexOf('claimInboundMessage')],
@@ -32,13 +33,13 @@ const assertions = [
   ['pending states are centralized', route.includes("getPendingAction(claim.admin, message.from, linkedUser.id)") && route.includes("createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_edit'")],
   ['callbacks use new and legacy delete payloads', route.includes("confirm_delete") && route.includes("confirm_delete_transaction") && route.includes("cancel_delete")],
   ['pending actions have priority over finance and Gemini', route.indexOf("pending?.actionType === 'pending_edit'") < route.indexOf('else if (intent && linkedUser)') && route.indexOf('else if (intent && linkedUser)') < route.indexOf('createReply(message.text)')],
-  ['pending edit requires valid fields', route.includes('parseEditFields(message.text)') && route.includes('buildPendingEditReply()')],
+  ['pending edit requires valid fields', route.includes('parseEditFields(effectiveMessageText)') && route.includes('buildPendingEditReply()')],
   ['pending actions never expose ids in replies', route.includes('buildPendingDeleteReply()') && !route.includes('Você deseja excluir esta transação? Responda “confirmar exclusão”')],
   ['pending action metadata is minimal and expires', pending.includes('action_type') && pending.includes('transaction_id') && pending.includes('expires_at') && pending.includes('consumed_at') && pending.includes('PENDING_TTL_MS')],
   ['ownership is checked before mutations', route.includes(".eq('id', transactionId).eq('user_id', user.id)") && route.includes(".eq('id', payload.transactionId).eq('user_id', linkedUser.id)")],
   ['actions are consumed after safe mutation', route.includes("consumePendingAction(claim.admin, pending.messageId, 'consumed')")],
   ['pending instrumentation covers lookup and edit path', pending.includes('pending_edit_lookup=true') && pending.includes('pending_lookup_found=true') && pending.includes('pending_expired=') && pending.includes('pending_owned=') && pending.includes('edit_parser_matched=')],
-  ['deterministic edit avoids Gemini and fallback', route.includes('const intent = pending ? null : parseFinanceIntent(message.text)') && route.includes('edit_update_attempted=true') && route.includes('edit_update_success=false') && route.includes('[WA ACTION] fallback_reached=true')],
+  ['deterministic edit avoids Gemini and fallback', route.includes('const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText)') && route.includes('edit_update_attempted=true') && route.includes('edit_update_success=false') && route.includes('[WA ACTION] fallback_reached=true')],
   ['edit parser supports all reported value phrases', pending.includes('normalizeInput') && pending.includes('extractMoney') && pending.includes('parseMoney') && pending.includes('categoryName') && pending.includes('ontem')],
   ['edit parser emits sanitized diagnostic fields', pending.includes('edit_parser_matched=') && pending.includes('edit_fields=')],
   ['callback pending state survives final inbound processing', route.includes('let preservePendingAction = false') && route.includes('preservePendingAction = created') && route.includes('preservePending = false') && route.includes('preservePendingAction,')],
@@ -47,7 +48,13 @@ const assertions = [
   ['update summary uses persisted category', route.includes("updated.categoryName") && !route.includes("fields.categoryName ?? 'Sem alteração'")],
   ['new transaction is not accidental edit', route.includes('looksLikeNewTransaction') && route.includes('registrar esse gasto como uma nova movimentação')],
   ['natural language parser has local normalization', pending.includes('normalizeInput') && pending.includes('parseMoney') && pending.includes('extractMoney')],
+  ['webhook accepts audio image and document', route.includes("message.type === 'audio'") && route.includes("message.type === 'image'") && route.includes("message.type === 'document'") && route.includes('processWhatsAppMedia')],
+  ['media stays server-side with safe limits', media.includes('WHATSAPP_ACCESS_TOKEN') && media.includes('MAX_MEDIA_BYTES') && media.includes('MEDIA_TIMEOUT_MS') && !media.includes('console.info(raw')],
+  ['media converges into finance intent', route.includes('mediaExtractionToText') && route.includes('effectiveMessageText') && route.includes('parseFinanceIntent(effectiveMessageText)')],
+  ['pending edit receives media transcription', route.includes('parseEditFields(effectiveMessageText)') && route.includes('looksLikeNewTransaction')],
+  ['unsupported or ambiguous media never inserts', route.includes('mediaUnavailable') && route.includes('Não consegui extrair dados financeiros com segurança')],
 ]
+
 
 for (const [name, passed] of assertions) {
   if (!passed) throw new Error(`Regression failed: ${name}`)
