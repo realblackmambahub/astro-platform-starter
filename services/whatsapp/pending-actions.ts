@@ -67,7 +67,7 @@ export async function createPendingAction(
 }
 
 export async function getPendingAction(admin: AdminClient | null, fromPhone: string, userId: string) {
-  console.info('[WA ACTION] pending_lookup_started=true')
+  console.info('[WA ACTION] pending_edit_lookup=true')
   if (!admin) {
     console.info('[WA ACTION] pending_lookup_found=false')
     return null
@@ -121,7 +121,7 @@ export async function consumePendingAction(admin: AdminClient | null, messageId:
 
 export function parseEditFields(text: string): Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> & { categoryName?: string } | null {
   const value = text.trim()
-  const amountMatch = value.match(/(?:valor\s*(?:para|de)?\s*|r\$?\s*)(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real|r\$)?/i) ?? value.match(/\b(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real|r\$)\b/i)
+  const amountMatch = value.match(/(?:valor\s*(?:(?:para|de|é|e)\s*)?|mude\s+(?:o\s+)?valor\s+(?:para\s*)?|troque\s+(?:o\s+)?valor\s+(?:para\s*)?|mude\s+para\s*|coloca\s*|era\s*|r\$?\s*)(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real|r\$)?/i) ?? value.match(/\bvalor\s*[:=]?\s*(\d+(?:[.,]\d{1,2})?)/i)
   const dateMatch = value.match(/(?:dia|data)\s+(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?/i)
   const relativeDate = /\bontem\b/i.test(value) ? new Date(Date.now() - 86400000) : null
   const descriptionMatch = value.match(/(?:descrição|descricao|nome)\s*(?:para|:|=|-)?\s*([\p{L}][\p{L}\d\s-]{1,80})/iu)
@@ -140,7 +140,8 @@ export function parseEditFields(text: string): Partial<Pick<FinanceIntent, 'desc
     const date = new Date(`${iso}T00:00:00Z`)
     if (!Number.isNaN(date.valueOf()) && date.getUTCMonth() + 1 === Number(dateMatch[2]) && date.getUTCDate() === Number(dateMatch[1])) next.transactionDate = iso
   }
-  console.info(`[WA ACTION] edit_fields_detected=${String(Object.keys(next).length > 0)}`)
+  console.info(`[WA ACTION] edit_parser_matched=${String(Object.keys(next).length > 0)}`)
+  if (Object.keys(next).length) console.info(`[WA ACTION] edit_fields=${Object.keys(next).map((field) => field === 'transactionDate' ? 'date' : field).join('|')}`)
   return Object.keys(next).length ? next : null
 }
 

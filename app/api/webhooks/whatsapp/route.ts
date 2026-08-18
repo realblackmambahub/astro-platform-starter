@@ -353,20 +353,23 @@ async function deleteOwnedTransaction(admin: WebhookAdminClient, phone: string, 
   return data?.id ? { ok: true as const } : { ok: false as const, reason: 'not_owned' }
 }
 
-async function markInboundProcessed(
+  async function markInboundProcessed(
   admin: WebhookAdminClient,
   messageId: string,
-) {
+  preservePending = false,
+  ) {
   if (!admin) return
-
-  const { error } = await admin
-    .from('whatsapp_messages')
-    .update({
-      status: 'processed',
-      processed_at: new Date().toISOString(),
-    })
-    .eq('wa_message_id', messageId)
-    .eq('direction', 'inbound')
+  
+  const query = admin
+  .from('whatsapp_messages')
+  .update({
+  ...(preservePending ? {} : { status: 'processed' }),
+  processed_at: preservePending ? null : new Date().toISOString(),
+  })
+  .eq('wa_message_id', messageId)
+  .eq('direction', 'inbound')
+  if (preservePending) query.in('status', ['pending_edit', 'pending_delete'])
+  const { error } = await query
 
   if (error) {
     console.error('[KEVO WhatsApp] failed to mark inbound processed', {
@@ -714,6 +717,7 @@ export async function POST(request: Request) {
       let transactionId: string | undefined
       let categoryName = 'Sem categoria'
       let actionButtons: Array<{ id: string; title: string }> | undefined
+      let preservePendingAction = false
       const payload = parseActionPayload(message.text)
       const pendingLookupStartedAt = Date.now()
       const pending = linkedUser ? await getPendingAction(claim.admin, message.from, linkedUser.id) : null
@@ -728,7 +732,10 @@ export async function POST(request: Request) {
         const owned = await claim.admin?.from('transactions').select('id').eq('id', payload.transactionId).eq('user_id', linkedUser.id).maybeSingle()
         if (!owned?.data?.id) reply = 'Não encontrei essa transação na sua conta.'
         else {
-          await createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_edit', payload.transactionId)
+          const created = await createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_edit', payload.transactionId)
+          preservePendingAction = created
+          console.info(`[WA ACTION] callback_edit_received=${String(created)}`)
+          console.info(`[WA ACTION] pending_edit_created=${String(created)}`)
           console.info('[WA ACTION] pending_action=pending_edit')
           reply = buildPendingEditReply()
         }
@@ -736,7 +743,8 @@ export async function POST(request: Request) {
         const owned = await claim.admin?.from('transactions').select('id').eq('id', payload.transactionId).eq('user_id', linkedUser.id).maybeSingle()
         if (!owned?.data?.id) reply = 'Não encontrei essa transação na sua conta.'
         else {
-          await createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_delete', payload.transactionId)
+          const created = await createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_delete', payload.transactionId)
+          preservePendingAction = created
           console.info('[WA ACTION] delete_confirmation_started=true')
           reply = buildPendingDeleteReply()
           actionButtons = [
@@ -858,9 +866,10 @@ export async function POST(request: Request) {
       )
 
       await markInboundProcessed(
-        claim.admin,
-        message.messageId,
-      )
+  claim.admin,
+  message.messageId,
+  preservePendingAction,
+  )
 
       processed += 1
       console.info(`[WA PERF] total_ms=${Date.now() - webhookStartedAt}`)
