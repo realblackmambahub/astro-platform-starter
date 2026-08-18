@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 
 const route = await readFile(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
 const activation = await readFile(new URL('../services/whatsapp/activation.ts', import.meta.url), 'utf8')
+const pending = await readFile(new URL('../services/whatsapp/pending-actions.ts', import.meta.url), 'utf8')
 
 const assertions = [
   ['activation runs before inbound claim', route.indexOf('handleActivationMessage') < route.indexOf('claimInboundMessage')],
@@ -28,6 +29,14 @@ const assertions = [
   ['confirmation contains real transaction fields', route.includes('💰 *Valor:* ${formatAmount(persisted.amount)}') && route.includes('🏷️ *Categoria:* ${persisted.categoryName}') && route.includes('📅 *Data:* ${formatDate(persisted.transactionDate)}') && route.includes('✅ *Status:* Registrado com sucesso')],
   ['completed session clears transient data', activation.includes('metadata: {}') && activation.includes("state,\n    customer_email: customerEmail ?? null")],
   ['concurrent activation is protected by active email index', true],
+  ['pending states are centralized', route.includes("getPendingAction(claim.admin, message.from, linkedUser.id)") && route.includes("createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_edit'")],
+  ['callbacks use new and legacy delete payloads', route.includes("confirm_delete") && route.includes("confirm_delete_transaction") && route.includes("cancel_delete")],
+  ['pending actions have priority over finance and Gemini', route.indexOf("pending?.actionType === 'pending_edit'") < route.indexOf('else if (intent && linkedUser)') && route.indexOf('else if (intent && linkedUser)') < route.indexOf('createReply(message.text)')],
+  ['pending edit requires valid fields', route.includes('parseEditFields(message.text)') && route.includes('buildPendingEditReply()')],
+  ['pending actions never expose ids in replies', route.includes('buildPendingDeleteReply()') && !route.includes('Você deseja excluir esta transação? Responda “confirmar exclusão”')],
+  ['pending action metadata is minimal and expires', pending.includes('action_type') && pending.includes('transaction_id') && pending.includes('expires_at') && pending.includes('consumed_at') && pending.includes('PENDING_TTL_MS')],
+  ['ownership is checked before mutations', route.includes(".eq('id', transactionId).eq('user_id', user.id)") && route.includes(".eq('id', payload.transactionId).eq('user_id', linkedUser.id)")],
+  ['actions are consumed after safe mutation', route.includes("consumePendingAction(claim.admin, pending.messageId, 'consumed')")],
 ]
 
 for (const [name, passed] of assertions) {
