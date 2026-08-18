@@ -39,7 +39,7 @@ const assertions = [
   ['ownership is checked before mutations', route.includes(".eq('id', transactionId).eq('user_id', user.id)") && route.includes(".eq('id', payload.transactionId).eq('user_id', linkedUser.id)")],
   ['actions are consumed after safe mutation', route.includes("consumePendingAction(claim.admin, pending.messageId, 'consumed')")],
   ['pending instrumentation covers lookup and edit path', pending.includes('pending_edit_lookup=true') && pending.includes('pending_lookup_found=true') && pending.includes('pending_expired=') && pending.includes('pending_owned=') && pending.includes('edit_parser_matched=')],
-  ['deterministic edit avoids Gemini and fallback', route.includes('const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText)') && route.includes('edit_update_attempted=true') && route.includes('edit_update_success=false') && route.includes('[WA ACTION] fallback_reached=true')],
+  ['deterministic edit avoids Gemini and fallback', route.includes("const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText, { source: message.media?.kind === 'audio' ? 'audio' : 'text' })") && route.includes('edit_update_attempted=true') && route.includes('edit_update_success=false') && route.includes('[WA ACTION] fallback_reached=true')],
   ['edit parser supports all reported value phrases', pending.includes('normalizeInput') && pending.includes('extractMoney') && pending.includes('parseMoney') && pending.includes('categoryName') && pending.includes('ontem')],
   ['edit parser emits sanitized diagnostic fields', pending.includes('edit_parser_matched=') && pending.includes('edit_fields=')],
   ['callback pending state survives final inbound processing', route.includes('let preservePendingAction = false') && route.includes('preservePendingAction = created') && route.includes('preservePending = false') && route.includes('preservePendingAction,')],
@@ -50,9 +50,14 @@ const assertions = [
   ['natural language parser has local normalization', pending.includes('normalizeInput') && pending.includes('parseMoney') && pending.includes('extractMoney')],
   ['webhook accepts audio image and document', route.includes("message.type === 'audio'") && route.includes("message.type === 'image'") && route.includes("message.type === 'document'") && route.includes('processWhatsAppMedia')],
   ['media stays server-side with safe limits', media.includes('WHATSAPP_ACCESS_TOKEN') && media.includes('MAX_MEDIA_BYTES') && media.includes('MEDIA_TIMEOUT_MS') && !media.includes('console.info(raw')],
-  ['media converges into finance intent', route.includes('mediaExtractionToText') && route.includes('effectiveMessageText') && route.includes('parseFinanceIntent(effectiveMessageText)')],
+  ['media converges into finance intent', route.includes('mediaExtractionToText') && route.includes('effectiveMessageText') && route.includes('parseFinanceIntent(effectiveMessageText, { source:')],
   ['pending edit receives media transcription', route.includes('parseEditFields(effectiveMessageText)') && route.includes('looksLikeNewTransaction')],
   ['unsupported or ambiguous media never inserts', route.includes('mediaUnavailable') && route.includes('Não consegui extrair dados financeiros com segurança')],
+  ['audio success requires sanitized nonempty transcription', media.includes('transcription_nonempty=') && media.includes('sanitizeTranscription') && media.includes('transcription_success=true')],
+  ['audio provider response is not mistaken for success', media.includes('gemini_response_received=true') && media.includes('failure_stage=transcription')],
+  ['original and normalized MIME are both observable', media.includes('mime_original=') && media.includes('mime_normalized=') && media.includes('audio/ogg')],
+  ['audio routes through real finance dispatcher', route.includes("parseFinanceIntent(effectiveMessageText, { source: message.media?.kind === 'audio' ? 'audio' : 'text' })") && route.includes("stage=text_routing")],
+  ['audio failure cannot reach generic fallback', route.includes('mediaUnavailable') && route.indexOf('else if (mediaUnavailable)') < route.indexOf('const generated = await createReply(message.text)')],
 ]
 
 

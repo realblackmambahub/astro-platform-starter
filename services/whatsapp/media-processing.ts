@@ -70,9 +70,11 @@ async function downloadMetaMedia(mediaId: string, kind: MediaKind) {
       return null
     }
     const metadata = await metadataResponse.json() as { url?: string; mime_type?: string; file_size?: number }
+    const originalMimeType = metadata.mime_type?.trim() || 'missing'
     const normalized = kind === 'audio' ? normalizeWhatsAppAudioMime(metadata.mime_type) : { mimeType: metadata.mime_type?.toLowerCase().split(';')[0].trim() ?? null, codec: null }
     console.info(`[WA ${kind.toUpperCase()}] media_url_resolved=${String(Boolean(metadata.url))}`)
-    console.info(`[WA ${kind.toUpperCase()}] mime_type=${normalized.mimeType ?? 'unsupported'}`)
+    console.info(`[WA ${kind.toUpperCase()}] mime_original=${originalMimeType}`)
+    console.info(`[WA ${kind.toUpperCase()}] mime_normalized=${normalized.mimeType ?? 'unsupported'}`)
     if (!metadata.url || (metadata.file_size && metadata.file_size > MAX_MEDIA_BYTES)) {
       console.info(`[WA ${kind.toUpperCase()}] failure_stage=unsupported_mime`)
       return null
@@ -103,13 +105,20 @@ function parseJsonObject(text: string) {
   try { return JSON.parse(match[0]) as Record<string, unknown> } catch { return null }
 }
 
+function sanitizeTranscription(value: unknown) {
+  if (typeof value !== 'string') return null
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 2500)
+  if (!text || /^(?:blocked|refused|safety|unable to comply|não posso|nao posso)$/i.test(text)) return null
+  return text
+}
+
 function normalizeExtraction(kind: MediaKind, value: Record<string, unknown> | null): MediaExtraction {
   const amount = typeof value?.amount === 'number' && Number.isFinite(value.amount) && value.amount > 0 ? Number(value.amount.toFixed(2)) : undefined
   const confidence = typeof value?.confidence === 'number' && Number.isFinite(value.confidence) ? Math.max(0, Math.min(1, value.confidence)) : 0
   const date = typeof value?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.date) ? value.date : undefined
   return {
     kind,
-    text: typeof value?.text === 'string' ? value.text.trim().slice(0, 2500) : undefined,
+    text: sanitizeTranscription(value?.text) ?? undefined,
     merchant: typeof value?.merchant === 'string' ? value.merchant.trim().slice(0, 120) : undefined,
     amount,
     date,
@@ -151,14 +160,25 @@ export async function processWhatsAppMedia(input: MediaInput): Promise<MediaExtr
       contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data: Buffer.from(media.bytes).toString('base64') } }] }] as any,
       config: { temperature: 0, maxOutputTokens: input.kind === 'audio' ? 500 : 1000, ...(input.kind === 'audio' ? {} : { responseMimeType: 'application/json' }) },
     })
-    const raw = typeof response.text === 'string' ? response.text.trim() : ''
+    const raw = typeof response.text === 'string' ? response.text : ''
+    const text = input.kind === 'audio' ? sanitizeTranscription(raw) : raw.trim()
+    console.info(`[WA ${input.kind.toUpperCase()}] gemini_response_received=true`)
+    console.info(`[WA ${input.kind.toUpperCase()}] transcription_nonempty=${String(Boolean(text))}`)
     console.info(`[WA ${input.kind.toUpperCase()}] transcription_ms=${Date.now() - startedAt}`)
-    if (!raw) {
+    if (!text) {
       console.info(`[WA ${input.kind.toUpperCase()}] failure_stage=transcription`)
       return null
     }
-    if (input.kind === 'audio') return normalizeExtraction('audio', { text: raw, confidence: 1, ambiguous: false })
-    return normalizeExtraction(input.kind, parseJsonObject(raw))
+    if (input.kind === 'audio') {
+      console.info('[WA AUDIO] transcription_success=true')
+      return normalizeExtraction('audio', { text, confidence: 1, ambiguous: false })
+    }
+    const extraction = normalizeExtraction(input.kind, parseJsonObject(text))
+    if (!extraction || extraction.ambiguous || !extraction.amount) {
+      console.info(`[WA ${input.kind.toUpperCase()}] failure_stage=transcription`)
+      return null
+    }
+    return extraction
   } catch (error) {
     console.warn(`[WA ${input.kind.toUpperCase()}] failure_stage=transcription`, { type: error instanceof Error ? error.name : 'unknown' })
     return null

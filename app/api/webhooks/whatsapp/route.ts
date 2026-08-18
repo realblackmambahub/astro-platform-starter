@@ -749,8 +749,9 @@ export async function POST(request: Request) {
       }
       const effectiveMessageText = mediaText || message.text
       const mediaUnavailable = Boolean(message.media && !mediaText)
+      if (message.media && mediaText) console.info(`[WA ${message.media.kind.toUpperCase()}] stage=text_routing`)
       const editParseStartedAt = Date.now()
-      const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText)
+      const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText, { source: message.media?.kind === 'audio' ? 'audio' : 'text' })
       console.info(`[WA PERF] edit_parse_ms=${Date.now() - editParseStartedAt}`)
 
       if (!linkedUser) {
@@ -798,8 +799,8 @@ export async function POST(request: Request) {
           await consumePendingAction(claim.admin, active.messageId, 'consumed')
           reply = 'Tudo certo. A transação foi mantida.'
         }
-      } else if (pending?.actionType === 'pending_delete' && (isConfirmationText(message.text) || isCancellationText(message.text))) {
-        if (isCancellationText(message.text)) {
+      } else if (pending?.actionType === 'pending_delete' && (isConfirmationText(effectiveMessageText) || isCancellationText(effectiveMessageText))) {
+        if (isCancellationText(effectiveMessageText)) {
           await consumePendingAction(claim.admin, pending.messageId, 'consumed')
           reply = 'Tudo certo. A transação foi mantida.'
         } else {
@@ -809,7 +810,7 @@ export async function POST(request: Request) {
           reply = deleted.ok ? 'Transação excluída com sucesso.' : deleted.reason === 'not_owned' ? 'Essa transação já não está disponível.' : 'Não consegui excluir essa transação agora.'
           if (deleted.ok) console.info('[WA ACTION] delete_success=true')
         }
-      } else if (pending?.actionType === 'pending_edit' && isCancellationText(message.text)) {
+      } else if (pending?.actionType === 'pending_edit' && isCancellationText(effectiveMessageText)) {
         await consumePendingAction(claim.admin, pending.messageId, 'consumed')
         reply = 'Tudo certo. A edição foi cancelada e a transação permaneceu igual.'
       } else if (pending?.actionType === 'pending_edit') {

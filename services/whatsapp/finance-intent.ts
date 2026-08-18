@@ -65,7 +65,8 @@ function parseAmount(text: string) {
   return Number.isFinite(amount) && amount > 0 ? amount : null
 }
 
-export function parseFinanceIntent(text: string): FinanceIntent | null {
+export function parseFinanceIntent(text: string, options?: { source?: 'text' | 'audio' }): FinanceIntent | null {
+  console.info(`[WA DISPATCH] source=${options?.source ?? 'text'}`)
   const amount = parseAmount(text)
   if (!amount) return null
 
