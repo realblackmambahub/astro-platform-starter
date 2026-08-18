@@ -16,6 +16,9 @@ const assertions = [
   ['awaiting password recovers normalized email from session', activation.includes("const normalizedEmail = session.customer_email?.trim().toLowerCase()") && activation.includes("if (!sessionValid || !normalizedEmail)")],
   ['awaiting email uses its local normalized email', activation.includes("const email = normalizeEmail(text)") && activation.includes(".ilike('customer_email', email)")],
   ['activation runtime errors stay out of finance flow', route.includes("activation failed before finance flow") && route.includes('Tente novamente.')],
+  ['finance self-heals missing accounts', route.includes('ensureFinancialBootstrap(admin, userId)') && route.includes("reason: 'account_required'")],
+  ['finance logs sanitized resolution stages', route.includes('[WA FINANCE] user_resolved=true') && route.includes('[WA FINANCE] account_resolved=')],
+  ['finance stays scoped to resolved user', route.includes(".from('accounts').select('id, name').eq('user_id', userId)") && route.includes(".from('transactions').insert({")],
   ['completed session clears transient data', activation.includes('metadata: {}') && activation.includes("state,\n    customer_email: customerEmail ?? null")],
   ['concurrent activation is protected by active email index', true],
 ]

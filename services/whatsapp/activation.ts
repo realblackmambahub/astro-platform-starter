@@ -48,7 +48,7 @@ function normalizedCategoryName(name: string) {
   return name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
-async function ensureFinancialBootstrap(admin: Admin, userId: string) {
+export async function ensureFinancialBootstrap(admin: Admin, userId: string) {
   activationLog('bootstrap_started')
 
   const { data: profile, error: profileError } = await admin

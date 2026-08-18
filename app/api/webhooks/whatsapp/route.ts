@@ -5,7 +5,7 @@ import { sendWhatsAppTextMessage } from '@/services/whatsapp/send-message'
 import { sendWhatsAppInteractiveMessage } from '@/services/whatsapp/send-interactive'
 import { generateWhatsAppReply } from '@/services/whatsapp/gemini-reply'
 import { getWebhookAdminClient } from '@/services/subscription-access'
-import { handleActivationMessage } from '@/services/whatsapp/activation'
+import { ensureFinancialBootstrap, handleActivationMessage } from '@/services/whatsapp/activation'
 import {
   parseFinanceIntent,
   type FinanceIntent,
@@ -245,8 +245,20 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
   }).eq('wa_message_id', messageId).eq('direction', 'inbound')
 }
 
-async function createTransaction(admin: WebhookAdminClient, userId: string, intent: FinanceIntent, whatsappMessageId: string) {
+  async function createTransaction(admin: WebhookAdminClient, userId: string, intent: FinanceIntent, whatsappMessageId: string) {
   if (!admin) return { ok: false, reason: 'database_unavailable' as const }
+
+  console.info('[WA FINANCE] user_resolved=true')
+  const { count: initialAccountCount, error: initialAccountError } = await admin
+    .from('accounts')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+  console.info(`[WA FINANCE] account_count=${initialAccountError ? 'error' : initialAccountCount ?? 0}`)
+
+  const bootstrapCreated = (initialAccountCount ?? 0) === 0
+  const bootstrapReady = await ensureFinancialBootstrap(admin, userId)
+  console.info(`[WA FINANCE] bootstrap_account_created=${String(bootstrapCreated && bootstrapReady)}`)
+  if (!bootstrapReady) return { ok: false, reason: 'database_unavailable' as const }
 
   const existing = await admin.from('transactions').select('id').eq('whatsapp_message_id', whatsappMessageId).eq('user_id', userId).maybeSingle()
   if (existing.data?.id) return { ok: true as const, transactionId: existing.data.id, duplicate: true as const, categoryName: 'Sem categoria' }
@@ -256,6 +268,7 @@ async function createTransaction(admin: WebhookAdminClient, userId: string, inte
     admin.from('categories').select('id, name').eq('user_id', userId),
   ])
 
+  console.info(`[WA FINANCE] account_resolved=${String(!accountError && Boolean(accounts?.length))}`)
   if (accountError || !accounts?.length) return { ok: false, reason: 'account_required' as const }
   if (accounts.length > 1) return { ok: false, reason: 'multiple_accounts' as const }
 
