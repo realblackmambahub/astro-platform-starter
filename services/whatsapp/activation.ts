@@ -42,6 +42,10 @@ const DEFAULT_CATEGORY_SEEDS = [
   { name: 'Transporte', color: '#0EA5E9' },
   { name: 'Saúde', color: '#10B981' },
   { name: 'Lazer', color: '#EC4899' },
+  { name: 'Educação', color: '#F97316' },
+  { name: 'Assinaturas', color: '#6366F1' },
+  { name: 'Freelance', color: '#14B8A6' },
+  { name: 'Outros', color: '#64748B' },
 ]
 
 function normalizedCategoryName(name: string) {

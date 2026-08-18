@@ -7,6 +7,9 @@ import { generateWhatsAppReply } from '@/services/whatsapp/gemini-reply'
 import { getWebhookAdminClient } from '@/services/subscription-access'
 import { ensureFinancialBootstrap, handleActivationMessage } from '@/services/whatsapp/activation'
 import {
+  inferCategoryCandidate,
+  normalizeTransactionDescription,
+  normalizeCategoryName,
   parseFinanceIntent,
   type FinanceIntent,
 } from '@/services/whatsapp/finance-intent'
@@ -260,8 +263,11 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
   console.info(`[WA FINANCE] bootstrap_account_created=${String(bootstrapCreated && bootstrapReady)}`)
   if (!bootstrapReady) return { ok: false, reason: 'database_unavailable' as const }
 
-  const existing = await admin.from('transactions').select('id').eq('whatsapp_message_id', whatsappMessageId).eq('user_id', userId).maybeSingle()
-  if (existing.data?.id) return { ok: true as const, transactionId: existing.data.id, duplicate: true as const, categoryName: 'Sem categoria' }
+  const existing = await admin.from('transactions').select('id, description, amount, type, transaction_date, category_id').eq('whatsapp_message_id', whatsappMessageId).eq('user_id', userId).maybeSingle()
+  if (existing.data?.id) {
+    const existingCategory = existing.data.category_id ? await admin.from('categories').select('name').eq('id', existing.data.category_id).eq('user_id', userId).maybeSingle() : null
+    return { ok: true as const, transactionId: existing.data.id, duplicate: true as const, categoryName: existingCategory?.data?.name ?? 'Sem categoria', persisted: existing.data }
+  }
 
   const [{ data: accounts, error: accountError }, { data: categories, error: categoryError }] = await Promise.all([
     admin.from('accounts').select('id, name').eq('user_id', userId).order('created_at', { ascending: true }),
@@ -272,19 +278,16 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
   if (accountError || !accounts?.length) return { ok: false, reason: 'account_required' as const }
   if (accounts.length > 1) return { ok: false, reason: 'multiple_accounts' as const }
 
-  const category = categories?.find((item) => {
-    const name = item.name.toLowerCase()
-    return intent.type === 'expense'
-      ? Boolean(intent.categoryCandidate) && /aliment|mercado|supermercado|gasto|despesa/.test(name)
-      : /receita|salário|salario|renda/.test(name)
-  })
+  const candidate = intent.categoryCandidate ?? inferCategoryCandidate(intent.description, intent.type)
+  const category = categories?.find((item) => candidate && normalizeCategoryName(item.name) === normalizeCategoryName(candidate))
   const categoryName = category?.name ?? 'Sem categoria'
+  const persistedDescription = normalizeTransactionDescription(intent.description)
   const { data, error } = await admin.from('transactions').insert({
     user_id: userId,
     account_id: accounts[0].id,
     category_id: category?.id ?? null,
     whatsapp_message_id: whatsappMessageId,
-    description: intent.description,
+    description: persistedDescription,
     amount: intent.amount,
     type: intent.type,
     transaction_date: intent.transactionDate,
@@ -294,12 +297,12 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
   if (error) {
     if (error.code === '23505') {
       const retry = await admin.from('transactions').select('id').eq('whatsapp_message_id', whatsappMessageId).maybeSingle()
-      if (retry.data?.id) return { ok: true as const, transactionId: retry.data.id, duplicate: true as const, categoryName }
+      if (retry.data?.id) return { ok: true as const, transactionId: retry.data.id, duplicate: true as const, categoryName, persisted: retry.data }
     }
     console.error('[KEVO WhatsApp] transaction insert failed', { code: error.code })
     return { ok: false, reason: 'insert_failed' as const }
   }
-  return { ok: true as const, transactionId: data.id, duplicate: false as const, categoryName }
+  return { ok: true as const, transactionId: data.id, duplicate: false as const, categoryName, persisted: { ...data, description: persistedDescription, amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate, category_id: category?.id ?? null } }
 }
 
 async function updateOwnedTransaction(admin: WebhookAdminClient, phone: string, transactionId: string, intent: FinanceIntent) {
@@ -394,17 +397,24 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`))
 }
 
-function buildTransactionConfirmation(displayName: string | null, intent: FinanceIntent, categoryName: string) {
-  const firstName = displayName?.trim().split(/\s+/)[0]
-  const greeting = firstName ? `Olá, ${firstName}! Sua movimentação foi registrada por aqui.` : 'Olá! Sua movimentação foi registrada por aqui.'
+async function createContextualGreeting(displayName: string | null, persisted: { description: string; type: string; categoryName: string }) {
+  const firstName = displayName?.trim().split(/\s+/)[0] ?? ''
+  const fallback = firstName ? `Olá, ${firstName}! Sua movimentação foi registrada por aqui.` : 'Olá! Sua movimentação foi registrada por aqui.'
+  const generated = await generateWhatsAppReply(`Após registrar com sucesso uma ${persisted.type === 'expense' ? 'despesa' : 'receita'} de ${persisted.description} na categoria ${persisted.categoryName}, escreva somente uma saudação contextual curta para ${firstName || 'a pessoa usuária'}. Use no máximo duas frases, não invente fatos, não altere nenhum dado financeiro e não inclua resumo, valores, categoria, links ou botões.`)
+  if (!generated) return fallback
+  const clean = generated.replace(/\s+/g, ' ').trim()
+  return clean.length > 0 && clean.length <= 280 ? `${firstName ? `Olá, ${firstName}!` : 'Olá!'} ${clean.replace(/^olá[,!]?(\s+\w+)?[.!]?\s*/i, '').trim()}`.trim() : fallback
+}
+
+function buildTransactionConfirmation(greeting: string, persisted: { description: string; amount: number; categoryName: string; transactionDate: string }) {
   return `${greeting}
 
 🧾 *Resumo da transação:*
 
-📝 *Descrição:* ${intent.description}
-💰 *Valor:* ${formatAmount(intent.amount)}
-🏷️ *Categoria:* ${categoryName}
-📅 *Data:* ${formatDate(intent.transactionDate)}
+📝 *Descrição:* ${persisted.description}
+💰 *Valor:* ${formatAmount(persisted.amount)}
+🏷️ *Categoria:* ${persisted.categoryName}
+📅 *Data:* ${formatDate(persisted.transactionDate)}
 
 ✅ *Status:* Registrado com sucesso
 
@@ -700,7 +710,11 @@ export async function POST(request: Request) {
         if (result.ok) {
           transactionId = result.transactionId
           categoryName = result.categoryName
-          reply = buildTransactionConfirmation(linkedUser.display_name, intent, categoryName)
+          const persisted = result.persisted && 'description' in result.persisted
+            ? result.persisted
+            : { description: normalizeTransactionDescription(intent.description), amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate, category_id: null }
+          const greeting = await createContextualGreeting(linkedUser.display_name, { description: String(persisted.description), type: String(persisted.type), categoryName })
+          reply = buildTransactionConfirmation(greeting, { description: String(persisted.description), amount: Number(persisted.amount), categoryName, transactionDate: String(persisted.transaction_date) })
         } else if (result.reason === 'multiple_accounts') {
           await saveMissingAccountIntent(claim.admin, message.messageId, linkedUser.id, intent)
           reply = 'Encontrei mais de uma conta ativa no KEVO. Qual conta devo usar para registrar essa movimentação?'
