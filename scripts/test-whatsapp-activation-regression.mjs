@@ -39,11 +39,14 @@ const assertions = [
   ['actions are consumed after safe mutation', route.includes("consumePendingAction(claim.admin, pending.messageId, 'consumed')")],
   ['pending instrumentation covers lookup and edit path', pending.includes('pending_edit_lookup=true') && pending.includes('pending_lookup_found=true') && pending.includes('pending_expired=') && pending.includes('pending_owned=') && pending.includes('edit_parser_matched=')],
   ['deterministic edit avoids Gemini and fallback', route.includes('const intent = pending ? null : parseFinanceIntent(message.text)') && route.includes('edit_update_attempted=true') && route.includes('edit_update_success=false') && route.includes('[WA ACTION] fallback_reached=true')],
-  ['edit parser supports all reported value phrases', pending.includes('mude\\s+para') && pending.includes('troque\\s+(?:o\\s+)?valor') && pending.includes('coloca\\s*') && pending.includes('era\\s*') && pending.includes('categoryName') && pending.includes('ontem')],
+  ['edit parser supports all reported value phrases', pending.includes('normalizeInput') && pending.includes('extractMoney') && pending.includes('parseMoney') && pending.includes('categoryName') && pending.includes('ontem')],
   ['edit parser emits sanitized diagnostic fields', pending.includes('edit_parser_matched=') && pending.includes('edit_fields=')],
   ['callback pending state survives final inbound processing', route.includes('let preservePendingAction = false') && route.includes('preservePendingAction = created') && route.includes('preservePending = false') && route.includes('preservePendingAction,')],
   ['latency is measured by stage', route.includes('[WA PERF] webhook_start') && route.includes('user_resolved_ms=') && route.includes('pending_lookup_ms=') && route.includes('edit_parse_ms=') && route.includes('transaction_update_ms=') && route.includes('whatsapp_send_ms=') && route.includes('total_ms=')],
   ['fallback location is explicit and last', route.includes("const generated = await createReply(message.text)") && route.includes("Olá! Eu sou a KEVO. Sua mensagem foi recebida com sucesso.")],
+  ['update summary uses persisted category', route.includes("updated.categoryName") && !route.includes("fields.categoryName ?? 'Sem alteração'")],
+  ['new transaction is not accidental edit', route.includes('looksLikeNewTransaction') && route.includes('registrar esse gasto como uma nova movimentação')],
+  ['natural language parser has local normalization', pending.includes('normalizeInput') && pending.includes('parseMoney') && pending.includes('extractMoney')],
 ]
 
 for (const [name, passed] of assertions) {

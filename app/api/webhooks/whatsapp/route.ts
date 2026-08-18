@@ -340,8 +340,11 @@ async function updateOwnedTransaction(admin: WebhookAdminClient, userId: string,
     console.info('[WA ACTION] edit_update_success=false')
     return { ok: false as const, reason: 'update_failed' as const }
   }
+  const { data: category } = updated.category_id
+    ? await admin.from('categories').select('name').eq('id', updated.category_id).eq('user_id', userId).maybeSingle()
+    : { data: null }
   console.info('[WA ACTION] edit_update_success=true')
-  return { ok: true as const, updated }
+  return { ok: true as const, updated, categoryName: category?.name ?? 'Sem categoria' }
 }
 
 async function deleteOwnedTransaction(admin: WebhookAdminClient, phone: string, transactionId: string) {
@@ -785,7 +788,9 @@ export async function POST(request: Request) {
         reply = 'Tudo certo. A edição foi cancelada e a transação permaneceu igual.'
       } else if (pending?.actionType === 'pending_edit') {
         const fields = parseEditFields(message.text)
-        if (!fields) reply = buildPendingEditReply()
+        const looksLikeNewTransaction = /^(?:gastei|paguei|comprei|recebi|ganhei|entrou|saiu)\b/i.test(message.text.trim())
+        if (!fields && looksLikeNewTransaction) reply = 'Você está editando uma transação. Quer alterar a transação atual ou registrar esse gasto como uma nova movimentação? Responda “cancelar” para sair.'
+        else if (!fields) reply = buildPendingEditReply()
         else {
           const updateStartedAt = Date.now()
           const updated = await updateOwnedTransaction(claim.admin, linkedUser.id, pending.transactionId, fields)
@@ -794,7 +799,7 @@ export async function POST(request: Request) {
           else {
             const consumed = await consumePendingAction(claim.admin, pending.messageId, 'consumed')
             console.info(`[WA ACTION] pending_consumed=${String(consumed)}`)
-            reply = `Pronto! Atualizei sua transação.\n\n🧾 *Resumo da transação atualizada:*\n\n📝 *Descrição:* ${updated.updated.description}\n💰 *Valor:* ${formatAmount(Number(updated.updated.amount))}\n🏷️ *Categoria:* ${fields.categoryName ?? 'Sem alteração'}\n📅 *Data:* ${formatDate(String(updated.updated.transaction_date))}\n\n✅ *Status:* Atualizado com sucesso`
+            reply = `Pronto! Atualizei sua transação.\n\n🧾 *Resumo da transação:*\n\n📝 *Descrição:* ${updated.updated.description}\n💰 *Valor:* ${formatAmount(Number(updated.updated.amount))}\n🏷️ *Categoria:* ${updated.categoryName}\n📅 *Data:* ${formatDate(String(updated.updated.transaction_date))}\n\n✅ *Status:* Atualizado com sucesso`
             transactionId = pending.transactionId
             actionButtons = [
               { id: `edit_transaction:${transactionId}`, title: 'Editar transação' },

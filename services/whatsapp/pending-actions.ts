@@ -1,5 +1,3 @@
-import 'server-only'
-
 import type { FinanceIntent } from './finance-intent'
 
 const PENDING_TTL_MS = 10 * 60 * 1000
@@ -33,12 +31,18 @@ export function parseActionPayload(text: string) {
   return { action: match[1].toLowerCase(), transactionId: match[2] }
 }
 
+function normalizeInput(text: string) {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[!?;]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
 export function isConfirmationText(text: string) {
-  return /^(confirmar|confirmar exclusão|sim,? excluir|pode excluir)$/i.test(text.trim())
+  const value = normalizeInput(text)
+  return /^(confirmar|confirma|sim|sim excluir|sim pode excluir|pode excluir|excluir|exclui|apaga|pode apagar|confirmo)$/.test(value)
 }
 
 export function isCancellationText(text: string) {
-  return /^(cancelar|não|nao|deixa|não excluir|nao excluir)$/i.test(text.trim())
+  const value = normalizeInput(text)
+  return /^(cancelar|cancela|cancel|nao|nao excluir|nao exclui|deixa|deixa assim|manter|mantem|sair|nao quero alterar|nao altera|esquece|voltar)$/.test(value)
 }
 
 export async function createPendingAction(
@@ -119,27 +123,46 @@ export async function consumePendingAction(admin: AdminClient | null, messageId:
   return !error
 }
 
+function parseMoney(value: string) {
+  const normalized = value.replace(/\s/g, '').replace(/^r\$/i, '').replace(/reais?$/i, '')
+  const brazilian = normalized.includes(',')
+    ? normalized.replace(/\./g, '').replace(',', '.')
+    : normalized.replace(/,(?=\d{3}(?:\D|$))/g, '').replace(/\.(?=\d{3}(?:\D|$))/g, '')
+  const amount = Number(brazilian)
+  return Number.isFinite(amount) && amount > 0 && amount <= 100000000 ? Number(amount.toFixed(2)) : null
+}
+
+function extractMoney(value: string) {
+  const money = '(?:r\\$\\s*)?\\d{1,3}(?:[.]\\d{3})*(?:,\\d{1,2})?|(?:r\\$\\s*)?\\d+(?:[.,]\\d{1,2})?'
+  const contextual = value.match(new RegExp(`(?:pode\\s+(?:colocar|coloca)|(?:o\\s+)?valor|mude|muda|altere|altera|troque|troca|corrija|corrige|ajuste|ajusta|coloque|coloca|bota|poe|deixa|era|correto|verdade|para|pra|em|:|=)\\s*(?:o\\s+valor\\s*)?(?:e\\s+)?(?:para|pra|em|e|é|era)?\\s*(${money})`, 'i'))
+  const standalone = value.match(new RegExp(`^\\s*(${money})\\s*(?:reais?|r\\$)?\\s*$`, 'i'))
+  const match = contextual ?? standalone
+  return match ? parseMoney(match[1]) : null
+}
+
 export function parseEditFields(text: string): Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> & { categoryName?: string } | null {
-  const value = text.trim()
-  const amountMatch = value.match(/(?:valor\s*(?:(?:para|de|é|e)\s*)?|mude\s+(?:o\s+)?valor\s+(?:para\s*)?|troque\s+(?:o\s+)?valor\s+(?:para\s*)?|mude\s+para\s*|coloca\s*|era\s*|r\$?\s*)(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real|r\$)?/i) ?? value.match(/\bvalor\s*[:=]?\s*(\d+(?:[.,]\d{1,2})?)/i)
-  const dateMatch = value.match(/(?:dia|data)\s+(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?/i)
-  const relativeDate = /\bontem\b/i.test(value) ? new Date(Date.now() - 86400000) : null
-  const descriptionMatch = value.match(/(?:descrição|descricao|nome)\s*(?:para|:|=|-)?\s*([\p{L}][\p{L}\d\s-]{1,80})/iu)
-  const categoryMatch = value.match(/categoria\s*(?:para|:|=|-)?\s*([\p{L}][\p{L}\s-]{1,60})/iu)
+  const raw = text.trim()
+  const value = normalizeInput(raw)
   const next: Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> & { categoryName?: string } = {}
-  if (amountMatch) {
-    const amount = Number(amountMatch[1].replace(',', '.'))
-    if (Number.isFinite(amount) && amount > 0 && amount <= 100000000) next.amount = Number(amount.toFixed(2))
-  }
-  if (descriptionMatch) next.description = descriptionMatch[1].trim().replace(/\s+/g, ' ')
+  const amount = extractMoney(value)
+  if (amount !== null) next.amount = amount
+
+  const categoryMatch = value.match(/(?:categoria|coloca(?:r)?\s+em|isso\s+e|troca(?:r)?\s+para|na verdade\s+e)\s*(?:para|pra|:|=|-)?\s*([\p{L}][\p{L}\s-]{1,60})/iu)
   if (categoryMatch) next.categoryName = categoryMatch[1].trim().replace(/\s+/g, ' ')
-  if (relativeDate) next.transactionDate = relativeDate.toISOString().slice(0, 10)
-  if (dateMatch) {
+
+  const descriptionMatch = value.match(/(?:descric(?:ao|ao)|nome)\s*(?:para|pra|:|=|-)?\s*([\p{L}][\p{L}\d\s-]{1,80})/iu) ?? value.match(/(?:coloca(?:r)?|na verdade foi)\s+([\p{L}][\p{L}\d\s-]{2,80})\s+(?:na descric(?:ao|ao)|como descric(?:ao|ao))/iu)
+  if (descriptionMatch) next.description = descriptionMatch[1].trim().replace(/\s+/g, ' ')
+
+  const dateMatch = value.match(/(?:dia|data)\s*(?:para|pra|:|=|-)?\s*(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?/i)
+  if (/\bhoje\b/i.test(value)) next.transactionDate = new Date().toISOString().slice(0, 10)
+  else if (/\bontem\b/i.test(value)) next.transactionDate = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+  else if (dateMatch) {
     const year = dateMatch[3] ? (dateMatch[3].length === 2 ? `20${dateMatch[3]}` : dateMatch[3]) : String(new Date().getUTCFullYear())
     const iso = `${year}-${dateMatch[2].padStart(2, '0')}-${dateMatch[1].padStart(2, '0')}`
     const date = new Date(`${iso}T00:00:00Z`)
     if (!Number.isNaN(date.valueOf()) && date.getUTCMonth() + 1 === Number(dateMatch[2]) && date.getUTCDate() === Number(dateMatch[1])) next.transactionDate = iso
   }
+
   console.info(`[WA ACTION] edit_parser_matched=${String(Object.keys(next).length > 0)}`)
   if (Object.keys(next).length) console.info(`[WA ACTION] edit_fields=${Object.keys(next).map((field) => field === 'transactionDate' ? 'date' : field).join('|')}`)
   return Object.keys(next).length ? next : null
