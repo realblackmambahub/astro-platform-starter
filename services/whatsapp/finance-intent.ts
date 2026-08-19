@@ -109,13 +109,16 @@ export function parseFinanceIntent(text: string, options?: { source?: 'text' | '
   const isExpense = EXPENSE_PATTERN.test(text)
   const isIncome = INCOME_PATTERN.test(text)
   if (isExpense === isIncome) return null
+  const actionMatch = text.match(isExpense ? EXPENSE_PATTERN : INCOME_PATTERN)
+  const actionText = actionMatch?.index !== undefined ? text.slice(actionMatch.index) : text
 
-  const cleaned = text
+  const cleaned = actionText
     .replace(new RegExp(parsedAmount.raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '')
     .replace(EXPENSE_PATTERN, '')
     .replace(INCOME_PATTERN, '')
     .replace(/\b(kevo|kev[oô]|hoje|ontem|amanhã|amanha|eu)\b/gi, ' ')
-    .replace(/\b(reais?|r\$|no|na|em|de|com|por|do|da)\b/gi, ' ')
+    .replace(/\b(reais?|r\$)\b/gi, ' ')
+    .replace(/^[\s,.-]*(?:no|na|em|de|do|da|com|por)\s+/i, ' ')
     .replace(/\b(?:de\s+)?(?:um|uma)\b/gi, ' ')
     .replace(/[^\p{L}\p{N}\s&-]/gu, ' ')
     .replace(/\s+/g, ' ')

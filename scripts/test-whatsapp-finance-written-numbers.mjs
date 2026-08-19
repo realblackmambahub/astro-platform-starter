@@ -2,10 +2,14 @@ import assert from 'node:assert/strict'
 const { parseFinanceIntent } = await import('../services/whatsapp/finance-intent.ts')
 
 const cases = [
+  ['Kevo, eu gastei 50 reais no iFood', 'expense', 50, 'iFood', 'Alimentação'],
+  ['que horror hoje eu gastei 50 reais no iFood', 'expense', 50, 'iFood', 'Alimentação'],
   ['Kevo hoje eu gastei noventa reais no iFood', 'expense', 90, 'iFood', 'Alimentação'],
   ['hoje gastei cinquenta reais de gasolina', 'expense', 50, 'Gasolina', 'Transporte'],
   ['paguei cento e vinte reais de internet', 'expense', 120, 'Internet', null],
   ['eu paguei cento e vinte reais de internet', 'expense', 120, 'Internet', null],
+  ['comprei 80 reais no Mercado Livre', 'expense', 80, 'Mercado Livre', 'Alimentação'],
+  ['paguei 150 reais de plano de saúde', 'expense', 150, 'Plano de saúde', null],
   ['recebi quinhentos reais de um freela', 'income', 500, 'Freela', 'Freelance'],
   ['gastei vinte e cinco reais e cinquenta centavos no almoço', 'expense', 25.5, 'Almoço', 'Alimentação'],
 ]
