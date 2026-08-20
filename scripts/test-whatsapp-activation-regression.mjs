@@ -64,6 +64,11 @@ const assertions = [
   ['activation summary distinguishes insert outcomes', activation.includes("summary.insert = error ? 'error' : created ? 'success' : 'empty'")],
   ['activation summary distinguishes awaiting password update outcomes', activation.includes("summary.updateAwaitingPassword = error ? 'error' : data ? 'success' : 'zero_rows'")],
   ['activation summary preserves original handler error', activation.includes('summary.responseType = \'handler_error\'') && activation.includes('throw error')],
+  ['stale sessions are looked up without expiry filter', activation.includes('getLatestPendingSession') && activation.includes('stale_session_lookup=')],
+  ['expired sessions transition to failed before insert', activation.includes('closeExpiredPendingSession') && activation.includes("closeSession(admin, session, 'failed')")],
+  ['valid session is reused after insert race', activation.includes('const validSession = await getSession(admin, waId)') && activation.includes('Sua ativação já está em andamento')],
+  ['insert retries at most once after unique violation', activation.includes('attempt < 2') && activation.includes('create_session_retry=true')],
+  ['stale email conflicts are recovered once', activation.includes('getLatestPendingSession(admin, { email })') && activation.includes('isUniqueViolation(emailUpdate.error)')],
 ]
 
 

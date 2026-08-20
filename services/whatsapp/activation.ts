@@ -127,6 +127,31 @@ async function getSession(admin: Admin, waId: string) {
   return data as ActivationSession | null
 }
 
+async function getLatestPendingSession(admin: Admin, filters: { waId?: string; email?: string }) {
+  let query = admin
+    .from('whatsapp_activation_sessions')
+    .select('id, wa_id, customer_email, state, metadata, expires_at')
+    .in('state', ['awaiting_email', 'awaiting_password'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (filters.waId) query = query.eq('wa_id', filters.waId)
+  if (filters.email) query = query.ilike('customer_email', filters.email)
+  const { data, error } = await query.maybeSingle()
+  activationLog('stale_session_lookup=' + String(!error), error ? { errorCode: safeError(error).errorCode, stage: 'stale_session_lookup' } : {})
+  return data as ActivationSession | null
+}
+
+function isUniqueViolation(error: unknown) {
+  return safeError(error).errorCode === '23505'
+}
+
+async function closeExpiredPendingSession(admin: Admin, session: ActivationSession | null) {
+  if (!session || !isExpired(session)) return false
+  activationLog('stale_session_cleanup_started')
+  await closeSession(admin, session, 'failed')
+  return true
+}
+
 async function closeSession(admin: Admin, session: ActivationSession, state: 'completed' | 'failed' | 'expired', customerEmail?: string | null) {
   activationLog('session_cleanup_started')
   activationLog(`session_cleanup_reason=${state}`)
@@ -351,7 +376,14 @@ export async function handleActivationMessage(admin: Admin | null, waId: string,
     if (!isEmail(email)) return finish({ handled: true as const, reply: 'Envie o e-mail usado na compra para continuar a ativação.' })
     const { data: subscription } = await admin.from('subscriptions').select('id').ilike('customer_email', email).eq('status', 'active').limit(1).maybeSingle()
     if (!subscription) return finish({ handled: true as const, reply: 'Não consegui validar esse e-mail de compra. Confira e envie novamente.' })
-    const { data, error } = await admin.from('whatsapp_activation_sessions').update({ customer_email: email, state: 'awaiting_password', updated_at: new Date().toISOString() }).eq('id', current.id).eq('state', 'awaiting_email').select('id').maybeSingle()
+    let emailUpdate: { data: { id: string } | null; error: unknown } = { data: null, error: null }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      emailUpdate = await admin.from('whatsapp_activation_sessions').update({ customer_email: email, state: 'awaiting_password', updated_at: new Date().toISOString() }).eq('id', current.id).eq('state', 'awaiting_email').select('id').maybeSingle()
+      if (!emailUpdate.error || !isUniqueViolation(emailUpdate.error) || attempt === 1) break
+      const staleByEmail = await getLatestPendingSession(admin, { email })
+      if (!(await closeExpiredPendingSession(admin, staleByEmail))) break
+    }
+    const { data, error } = emailUpdate
     summary.updateAwaitingPassword = error ? 'error' : data ? 'success' : 'zero_rows'
     if (error) return finish({ handled: true as const, reply: 'Não foi possível iniciar a ativação. Tente novamente.' })
     if (!data) return finish({ handled: true as const, reply: 'Não foi possível iniciar a ativação. Tente novamente.' })
@@ -359,7 +391,18 @@ export async function handleActivationMessage(admin: Admin | null, waId: string,
   }
 
   activationLog('create_session_started')
-  const { data: created, error } = await admin.from('whatsapp_activation_sessions').insert({ wa_id: waId, state: 'awaiting_email', expires_at: new Date(Date.now() + SESSION_TTL_MINUTES * 60_000).toISOString() }).select('id').maybeSingle()
+  let createResult: { data: { id: string } | null; error: unknown } = { data: null, error: null }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    createResult = await admin.from('whatsapp_activation_sessions').insert({ wa_id: waId, state: 'awaiting_email', expires_at: new Date(Date.now() + SESSION_TTL_MINUTES * 60_000).toISOString() }).select('id').maybeSingle()
+    if (!createResult.error) break
+    if (!isUniqueViolation(createResult.error)) break
+    const validSession = await getSession(admin, waId)
+    if (validSession) return finish({ handled: true as const, reply: 'Sua ativação já está em andamento. Envie o e-mail usado na compra.' })
+    const staleSession = await getLatestPendingSession(admin, { waId })
+    if (!(await closeExpiredPendingSession(admin, staleSession))) break
+    activationLog('create_session_retry=true')
+  }
+  const { data: created, error } = createResult
   summary.insert = error ? 'error' : created ? 'success' : 'empty'
   activationLog(`create_session_success=${String(!error && Boolean(created))}`, error ? { errorCode: safeError(error).errorCode, stage: 'create_session' } : {})
   activationLog(`session_id_present=${String(Boolean(created?.id))}`)
