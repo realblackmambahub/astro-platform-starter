@@ -46,7 +46,7 @@ const assertions = [
   ['latency is measured by stage', route.includes('[WA PERF] webhook_start') && route.includes('user_resolved_ms=') && route.includes('pending_lookup_ms=') && route.includes('edit_parse_ms=') && route.includes('transaction_update_ms=') && route.includes('whatsapp_send_ms=') && route.includes('total_ms=')],
   ['fallback location is explicit and last', route.includes("const generated = await createReply(message.text)") && route.includes("Olá! Eu sou a KEVO. Sua mensagem foi recebida com sucesso.")],
   ['update summary uses persisted category', route.includes("updated.categoryName") && !route.includes("fields.categoryName ?? 'Sem alteração'")],
-  ['new transaction is not accidental edit', route.includes('looksLikeNewTransaction') && route.includes('registrar esse gasto como uma nova movimenta��ão')],
+  ['new transaction is not accidental edit', route.includes('looksLikeNewTransaction') && route.includes('Quer alterar a transação atual') && route.includes('registrar esse gasto como uma nova movimentação')],
   ['natural language parser has local normalization', pending.includes('normalizeInput') && pending.includes('parseMoney') && pending.includes('extractMoney')],
   ['webhook accepts audio image and document', route.includes("message.type === 'audio'") && route.includes("message.type === 'image'") && route.includes("message.type === 'document'") && route.includes('processWhatsAppMedia')],
   ['media stays server-side with safe limits', media.includes('WHATSAPP_ACCESS_TOKEN') && media.includes('MAX_MEDIA_BYTES') && media.includes('MEDIA_TIMEOUT_MS') && !media.includes('console.info(raw')],
