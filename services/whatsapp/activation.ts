@@ -284,15 +284,53 @@ async function activateWithPassword(admin: Admin, session: ActivationSession, pa
   return { ok: true as const, userId: authUser.id }
 }
 
+type ActivationSummary = {
+  sessionLookup: 'success' | 'error' | 'not_run'
+  activeSession: 'none' | 'awaiting_email' | 'awaiting_password' | 'completed' | 'failed' | 'expired' | 'unknown'
+  insert: 'not_run' | 'success' | 'error' | 'empty'
+  updateAwaitingPassword: 'not_run' | 'success' | 'error' | 'zero_rows'
+  handlerException: boolean
+  responseType: 'not_run' | 'activation_reply' | 'handler_error' | 'unhandled'
+}
+
 export async function handleActivationMessage(admin: Admin | null, waId: string, text: string) {
-  if (!admin) return { handled: false as const }
-  const current = await getSession(admin, waId)
+  const summary: ActivationSummary = {
+    sessionLookup: admin ? 'not_run' : 'not_run',
+    activeSession: 'unknown',
+    insert: 'not_run',
+    updateAwaitingPassword: 'not_run',
+    handlerException: false,
+    responseType: admin ? 'not_run' : 'unhandled',
+  }
+  let emitted = false
+  const emitSummary = () => {
+    if (emitted) return
+    emitted = true
+    console.info('[WA ACTIVATION SUMMARY]', summary)
+  }
+  const finish = <T extends { handled: boolean }>(result: T) => {
+    summary.responseType = result.handled ? 'activation_reply' : 'not_run'
+    return result
+  }
+
+  try {
+    if (!admin) return finish({ handled: false as const })
+    let current: ActivationSession | null = null
+    try {
+      current = await getSession(admin, waId)
+      summary.sessionLookup = 'success'
+    } catch (error) {
+      summary.sessionLookup = 'error'
+      summary.handlerException = true
+      throw error
+    }
+    summary.activeSession = current?.state ?? 'none'
   if (current && isExpired(current)) {
     await closeSession(admin, current, 'expired')
-    return { handled: true as const, reply: 'Sua ativação expirou. Envie qualquer mensagem para começar novamente.' }
+    return finish({ handled: true as const, reply: 'Sua ativação expirou. Envie qualquer mensagem para começar novamente.' })
   }
   if (current?.state === 'awaiting_password') {
-    const { error: eventError } = await admin
+    const { data: passwordEvent, error: eventError } = await admin
       .from('whatsapp_activation_sessions')
       .update({
         metadata: { activation_password_received: true },
@@ -300,25 +338,38 @@ export async function handleActivationMessage(admin: Admin | null, waId: string,
       })
       .eq('id', current.id)
       .eq('state', 'awaiting_password')
-    if (eventError) return { handled: true as const, reply: 'Não foi possível processar a ativação agora. Tente novamente.' }
+      .select('id')
+      .maybeSingle()
+    summary.updateAwaitingPassword = eventError ? 'error' : passwordEvent ? 'success' : 'zero_rows'
+    if (eventError || !passwordEvent) return finish({ handled: true as const, reply: 'Não foi possível processar a ativação agora. Tente novamente.' })
 
     const result = await activateWithPassword(admin, current, text.trim())
-    return { handled: true as const, reply: result.message ?? 'WhatsApp ativado. Agora suas mensagens financeiras serão registradas automaticamente.' }
+    return finish({ handled: true as const, reply: result.message ?? 'WhatsApp ativado. Agora suas mensagens financeiras serão registradas automaticamente.' })
   }
   if (current?.state === 'awaiting_email') {
     const email = normalizeEmail(text)
-    if (!isEmail(email)) return { handled: true as const, reply: 'Envie o e-mail usado na compra para continuar a ativação.' }
+    if (!isEmail(email)) return finish({ handled: true as const, reply: 'Envie o e-mail usado na compra para continuar a ativação.' })
     const { data: subscription } = await admin.from('subscriptions').select('id').ilike('customer_email', email).eq('status', 'active').limit(1).maybeSingle()
-    if (!subscription) return { handled: true as const, reply: 'Não consegui validar esse e-mail de compra. Confira e envie novamente.' }
+    if (!subscription) return finish({ handled: true as const, reply: 'Não consegui validar esse e-mail de compra. Confira e envie novamente.' })
     const { data, error } = await admin.from('whatsapp_activation_sessions').update({ customer_email: email, state: 'awaiting_password', updated_at: new Date().toISOString() }).eq('id', current.id).eq('state', 'awaiting_email').select('id').maybeSingle()
-    if (error || !data) return { handled: true as const, reply: 'Não foi possível iniciar a ativação. Tente novamente.' }
-    return { handled: true as const, reply: 'E-mail validado. Agora envie uma senha com pelo menos 8 caracteres para criar seu acesso seguro.' }
+    summary.updateAwaitingPassword = error ? 'error' : data ? 'success' : 'zero_rows'
+    if (error) return finish({ handled: true as const, reply: 'Não foi possível iniciar a ativação. Tente novamente.' })
+    if (!data) return finish({ handled: true as const, reply: 'Não foi possível iniciar a ativação. Tente novamente.' })
+    return finish({ handled: true as const, reply: 'E-mail validado. Agora envie uma senha com pelo menos 8 caracteres para criar seu acesso seguro.' })
   }
 
   activationLog('create_session_started')
   const { data: created, error } = await admin.from('whatsapp_activation_sessions').insert({ wa_id: waId, state: 'awaiting_email', expires_at: new Date(Date.now() + SESSION_TTL_MINUTES * 60_000).toISOString() }).select('id').maybeSingle()
+  summary.insert = error ? 'error' : created ? 'success' : 'empty'
   activationLog(`create_session_success=${String(!error && Boolean(created))}`, error ? { errorCode: safeError(error).errorCode, stage: 'create_session' } : {})
   activationLog(`session_id_present=${String(Boolean(created?.id))}`)
-  if (error || !created) return { handled: true as const, reply: 'Não foi possível iniciar a ativação agora. Tente novamente.' }
-  return { handled: true as const, reply: 'Para ativar seu WhatsApp, envie o e-mail usado na compra.' }
+  if (error || !created) return finish({ handled: true as const, reply: 'Não foi possível iniciar a ativação agora. Tente novamente.' })
+  return finish({ handled: true as const, reply: 'Para ativar seu WhatsApp, envie o e-mail usado na compra.' })
+  } catch (error) {
+    summary.handlerException = true
+    summary.responseType = 'handler_error'
+    throw error
+  } finally {
+    emitSummary()
+  }
 }

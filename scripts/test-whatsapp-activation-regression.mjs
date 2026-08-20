@@ -46,7 +46,7 @@ const assertions = [
   ['latency is measured by stage', route.includes('[WA PERF] webhook_start') && route.includes('user_resolved_ms=') && route.includes('pending_lookup_ms=') && route.includes('edit_parse_ms=') && route.includes('transaction_update_ms=') && route.includes('whatsapp_send_ms=') && route.includes('total_ms=')],
   ['fallback location is explicit and last', route.includes("const generated = await createReply(message.text)") && route.includes("Olá! Eu sou a KEVO. Sua mensagem foi recebida com sucesso.")],
   ['update summary uses persisted category', route.includes("updated.categoryName") && !route.includes("fields.categoryName ?? 'Sem alteração'")],
-  ['new transaction is not accidental edit', route.includes('looksLikeNewTransaction') && route.includes('registrar esse gasto como uma nova movimentação')],
+  ['new transaction is not accidental edit', route.includes('looksLikeNewTransaction') && route.includes('registrar esse gasto como uma nova movimenta��ão')],
   ['natural language parser has local normalization', pending.includes('normalizeInput') && pending.includes('parseMoney') && pending.includes('extractMoney')],
   ['webhook accepts audio image and document', route.includes("message.type === 'audio'") && route.includes("message.type === 'image'") && route.includes("message.type === 'document'") && route.includes('processWhatsAppMedia')],
   ['media stays server-side with safe limits', media.includes('WHATSAPP_ACCESS_TOKEN') && media.includes('MAX_MEDIA_BYTES') && media.includes('MEDIA_TIMEOUT_MS') && !media.includes('console.info(raw')],
@@ -58,6 +58,12 @@ const assertions = [
   ['original and normalized MIME are both observable', media.includes('mime_original=') && media.includes('mime_normalized=') && media.includes('audio/ogg')],
   ['audio routes through real finance dispatcher', route.includes("parseFinanceIntent(effectiveMessageText, { source: message.media?.kind === 'audio' ? 'audio' : 'text' })") && route.includes("stage=text_routing")],
   ['audio failure cannot reach generic fallback', route.includes('mediaUnavailable') && route.indexOf('else if (mediaUnavailable)') < route.indexOf('const generated = await createReply(message.text)')],
+  ['activation summary is emitted once', activation.includes('[WA ACTIVATION SUMMARY]') && activation.includes('if (emitted) return') && activation.includes('finally'),],
+  ['activation summary includes handler exception', activation.includes('handlerException: boolean') && activation.includes("summary.handlerException = true")],
+  ['activation summary distinguishes session lookup errors', activation.includes("summary.sessionLookup = 'error'")],
+  ['activation summary distinguishes insert outcomes', activation.includes("summary.insert = error ? 'error' : created ? 'success' : 'empty'")],
+  ['activation summary distinguishes awaiting password update outcomes', activation.includes("summary.updateAwaitingPassword = error ? 'error' : data ? 'success' : 'zero_rows'")],
+  ['activation summary preserves original handler error', activation.includes('summary.responseType = \'handler_error\'') && activation.includes('throw error')],
 ]
 
 
