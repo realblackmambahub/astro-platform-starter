@@ -305,6 +305,7 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
 
   const candidate = intent.categoryCandidate ?? inferCategoryCandidate(intent.description, intent.type)
   const category = categories?.find((item) => candidate && normalizeCategoryName(item.name) === normalizeCategoryName(candidate))
+    ?? categories?.find((item) => normalizeCategoryName(item.name) === normalizeCategoryName('Outros'))
   const categoryName = category?.name ?? 'Sem categoria'
   const persistedDescription = normalizeTransactionDescription(intent.description)
   const { data, error } = await admin.from('transactions').insert({
@@ -448,13 +449,20 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`))
 }
 
-async function createContextualGreeting(displayName: string | null, persisted: { description: string; type: string; categoryName: string }) {
-  const firstName = displayName?.trim().split(/\s+/)[0] ?? ''
-  const fallback = firstName ? `Olá, ${firstName}! Sua movimentação foi registrada por aqui.` : 'Olá! Sua movimentação foi registrada por aqui.'
-  const generated = await generateWhatsAppReply(`Após registrar com sucesso uma ${persisted.type === 'expense' ? 'despesa' : 'receita'} de ${persisted.description} na categoria ${persisted.categoryName}, escreva somente uma saudação contextual curta para ${firstName || 'a pessoa usuária'}. Use no máximo duas frases, não invente fatos, não altere nenhum dado financeiro e não inclua resumo, valores, categoria, links ou botões.`)
-  if (!generated) return fallback
-  const clean = generated.replace(/\s+/g, ' ').trim()
-  return clean.length > 0 && clean.length <= 280 ? `${firstName ? `Olá, ${firstName}!` : 'Olá!'} ${clean.replace(/^olá[,!]?(\s+\w+)?[.!]?\s*/i, '').trim()}`.trim() : fallback
+async function createContextualGreeting(displayName: string | null, persisted: { description: string; type: string; categoryName: string; amount: number }) {
+  const fallback = persisted.type === 'expense'
+    ? `Transação registrada com sucesso: ${persisted.description} entrou no controle.`
+    : `Receita registrada com sucesso: ${persisted.description} entrou no controle.`
+  const prompt = `Escreva uma única introdução curta, natural e variada em português-BR para confirmar uma movimentação financeira já persistida pela KEVO. Tipo: ${persisted.type}. Descrição: ${persisted.description}. Categoria: ${persisted.categoryName}. Valor: ${formatAmount(persisted.amount)}. Não repita sempre “Olá” ou “Prontinho”, não faça pergunta genérica, não dê conselho, não invente fatos e não inclua links, botões ou um resumo estruturado. Você pode mencionar apenas os dados fornecidos. Máximo de duas frases e 220 caracteres.`
+  try {
+    const generated = await generateWhatsAppReply(prompt)
+    const clean = generated?.replace(/\s+/g, ' ').trim()
+    if (!clean || clean.length > 220) return fallback
+    return clean
+  } catch (error) {
+    console.error('[KEVO WhatsApp] contextual greeting failed', { error: error instanceof Error ? error.name : 'unknown_error' })
+    return fallback
+  }
 }
 
 function buildTransactionConfirmation(greeting: string, persisted: { description: string; amount: number; categoryName: string; transactionDate: string }) {
@@ -470,9 +478,7 @@ function buildTransactionConfirmation(greeting: string, persisted: { description
 ✅ *Status:* Registrado com sucesso
 
 📊 Para visualizar mais detalhes e relatórios, acesse seu painel:
-https://panel.kevoia.com
-
-Se precisar de algo a mais, é só me chamar! 😊`
+https://panel.kevoia.com`
 }
 
 async function createReply(message: string) {
@@ -842,7 +848,7 @@ export async function POST(request: Request) {
           const persisted = result.persisted && 'description' in result.persisted
             ? result.persisted
             : { description: normalizeTransactionDescription(intent.description), amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate, category_id: null }
-          const greeting = await createContextualGreeting(linkedUser.display_name, { description: String(persisted.description), type: String(persisted.type), categoryName })
+          const greeting = await createContextualGreeting(linkedUser.display_name, { description: String(persisted.description), type: String(persisted.type), categoryName, amount: Number(persisted.amount) })
           reply = buildTransactionConfirmation(greeting, { description: String(persisted.description), amount: Number(persisted.amount), categoryName, transactionDate: String(persisted.transaction_date) })
         } else if (result.reason === 'multiple_accounts') {
           await saveMissingAccountIntent(claim.admin, message.messageId, linkedUser.id, intent)

@@ -47,18 +47,35 @@ export function normalizeCategoryName(name: string) {
   return name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
+export const CANONICAL_CATEGORY_NAMES = ['Alimentação', 'Moradia', 'Transporte', 'Saúde', 'Lazer', 'Educação', 'Assinaturas', 'Freelance', 'Outros'] as const
+
+export function getBrazilCivilDate(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now)
+}
+
+function shiftCivilDate(date: string, days: number) {
+  const [year, month, day] = date.split('-').map(Number)
+  const shifted = new Date(Date.UTC(year, month - 1, day + days))
+  return shifted.toISOString().slice(0, 10)
+}
+
 export function inferCategoryCandidate(description: string, type: FinanceIntent['type']) {
   const text = normalizeCategoryName(description)
   const groups = type === 'income'
     ? [{ name: 'Salário', terms: ['salario', 'pagamento', 'ordenado'] }, { name: 'Freelance', terms: ['freela', 'freelance', 'job', 'servico'] }]
     : [
+        { name: 'Assinaturas', terms: ['netflix', 'spotify', 'youtube premium', 'prime video', 'icloud', 'google one', 'assinatura', 'streaming'] },
         { name: 'Saúde', terms: ['farmacia', 'drogaria', 'remedio', 'medicamento', 'consulta', 'medico', 'dentista', 'hospital', 'exame', 'terapia', 'academia'] },
         { name: 'Alimentação', terms: ['mercado', 'supermercado', 'restaurante', 'lanche', 'almoco', 'jantar', 'padaria', 'ifood', 'delivery', 'comida', 'cafe'] },
         { name: 'Transporte', terms: ['uber', 'taxi', 'onibus', 'metro', 'gasolina', 'combustivel', 'estacionamento', 'pedagio'] },
-        { name: 'Moradia', terms: ['aluguel', 'condominio', 'agua', 'energia', 'luz', 'gas', 'internet residencial'] },
-        { name: 'Lazer', terms: ['cinema', 'bar', 'show', 'jogo', 'viagem', 'passeio', 'streaming'] },
+        { name: 'Moradia', terms: ['aluguel', 'condominio', 'agua', 'energia', 'luz', 'gas', 'internet'] },
+        { name: 'Lazer', terms: ['sinuca', 'cinema', 'bar', 'show', 'jogo', 'viagem', 'passeio'] },
         { name: 'Educação', terms: ['curso', 'faculdade', 'escola', 'livro', 'material escolar', 'mensalidade escolar'] },
-        { name: 'Assinaturas', terms: ['netflix', 'spotify', 'youtube premium', 'prime video', 'icloud', 'google one', 'assinatura'] },
       ]
   return groups.find((group) => group.terms.some((term) => text.includes(term)))?.name ?? null
 }
@@ -128,13 +145,22 @@ export function parseFinanceIntent(text: string, options?: { source?: 'text' | '
 
   const type = isExpense ? 'expense' : 'income'
   const description = normalizeTransactionDescription(cleaned)
+  const today = getBrazilCivilDate()
+  const explicitDate = text.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/)
+  const transactionDate = /\bontem\b/i.test(text)
+    ? shiftCivilDate(today, -1)
+    : /\bamanh(?:ã|a)\b/i.test(text)
+      ? shiftCivilDate(today, 1)
+      : explicitDate
+        ? `${explicitDate[3] ? (explicitDate[3].length === 2 ? `20${explicitDate[3]}` : explicitDate[3]) : today.slice(0, 4)}-${explicitDate[2].padStart(2, '0')}-${explicitDate[1].padStart(2, '0')}`
+        : today
 
   return {
     type,
     amount: Number(amount.toFixed(2)),
     description: description.slice(0, 120),
     categoryCandidate: inferCategoryCandidate(description, type),
-    transactionDate: new Date().toISOString().slice(0, 10),
+    transactionDate,
   }
 }
 
