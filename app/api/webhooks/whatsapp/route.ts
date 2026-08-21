@@ -4,11 +4,27 @@ import { NextResponse } from 'next/server'
 import { sendWhatsAppTextMessage } from '@/services/whatsapp/send-message'
 import { sendWhatsAppInteractiveMessage } from '@/services/whatsapp/send-interactive'
 import { generateWhatsAppReply } from '@/services/whatsapp/gemini-reply'
+import { isSupportedMedia, mediaExtractionToText, processWhatsAppMedia, type MediaInput } from '@/services/whatsapp/media-processing'
 import { getWebhookAdminClient } from '@/services/subscription-access'
+import { ensureFinancialBootstrap, handleActivationMessage } from '@/services/whatsapp/activation'
 import {
+  inferCategoryCandidate,
+  normalizeTransactionDescription,
+  normalizeCategoryName,
   parseFinanceIntent,
   type FinanceIntent,
 } from '@/services/whatsapp/finance-intent'
+import {
+  buildPendingDeleteReply,
+  buildPendingEditReply,
+  consumePendingAction,
+  createPendingAction,
+  getPendingAction,
+  isCancellationText,
+  isConfirmationText,
+  parseActionPayload,
+  parseEditFields,
+} from '@/services/whatsapp/pending-actions'
 
 export const runtime = 'nodejs'
 
@@ -46,6 +62,9 @@ type WhatsAppChange = {
           title?: string
         }
       }
+      audio?: { id?: string; mime_type?: string; voice?: boolean }
+      image?: { id?: string; mime_type?: string; caption?: string }
+      document?: { id?: string; mime_type?: string; filename?: string; caption?: string }
     }>
     statuses?: Array<{
       id?: string
@@ -68,6 +87,7 @@ type NormalizedTextMessage = {
   type: string
   text: string
   phoneNumberId: string
+  media?: MediaInput
 }
 
 function hasWebhookConfiguration() {
@@ -148,17 +168,26 @@ function extractTextMessages(
         .filter((message) =>
           (message.type === 'text' && Boolean(message.text?.body)) ||
           (message.type === 'interactive' && Boolean(message.interactive?.button_reply?.id)) ||
-          (message.type === 'button' && Boolean(message.button?.payload)),
+          (message.type === 'button' && Boolean(message.button?.payload)) ||
+          (message.type === 'audio' && Boolean(message.audio?.id)) ||
+          (message.type === 'image' && Boolean(message.image?.id)) ||
+          (message.type === 'document' && Boolean(message.document?.id)),
         )
         .filter((message) => Boolean(message.id) && Boolean(message.from))
-        .map((message) => ({
-          messageId: message.id!,
-          from: message.from!,
-          type: message.type === 'text' ? 'text' : 'button',
-          text: (message.text?.body || message.interactive?.button_reply?.id || message.button?.payload || '').trim(),
-          phoneNumberId,
-        }))
-        .filter((message) => message.text.length > 0)
+        .map((message) => {
+          const messageType = message.type!
+          const media = messageType === 'audio' ? message.audio : messageType === 'image' ? message.image : messageType === 'document' ? message.document : undefined
+          const mediaInput = media?.id && ['audio', 'image', 'document'].includes(messageType) ? { kind: messageType as MediaInput['kind'], mediaId: media.id, mimeType: media.mime_type, voice: messageType === 'audio' ? Boolean(message.audio?.voice) : undefined, fileName: 'filename' in media ? String(media.filename ?? '') : undefined } : undefined
+          return {
+            messageId: message.id!,
+            from: message.from!,
+            type: messageType === 'text' ? 'text' : messageType,
+            text: (message.text?.body || message.interactive?.button_reply?.id || message.button?.payload || '').trim(),
+            phoneNumberId,
+            media: mediaInput,
+          }
+        })
+        .filter((message) => message.text.length > 0 || Boolean(message.media))
     }),
   )
 }
@@ -244,33 +273,47 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
   }).eq('wa_message_id', messageId).eq('direction', 'inbound')
 }
 
-async function createTransaction(admin: WebhookAdminClient, userId: string, intent: FinanceIntent, whatsappMessageId: string) {
+  async function createTransaction(admin: WebhookAdminClient, userId: string, intent: FinanceIntent, whatsappMessageId: string) {
   if (!admin) return { ok: false, reason: 'database_unavailable' as const }
 
-  const existing = await admin.from('transactions').select('id').eq('whatsapp_message_id', whatsappMessageId).eq('user_id', userId).maybeSingle()
-  if (existing.data?.id) return { ok: true as const, transactionId: existing.data.id, duplicate: true as const, categoryName: 'Sem categoria' }
+  console.info('[WA FINANCE] user_resolved=true')
+  const { count: initialAccountCount, error: initialAccountError } = await admin
+    .from('accounts')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+  console.info(`[WA FINANCE] account_count=${initialAccountError ? 'error' : initialAccountCount ?? 0}`)
+
+  const bootstrapCreated = (initialAccountCount ?? 0) === 0
+  const bootstrapReady = await ensureFinancialBootstrap(admin, userId)
+  console.info(`[WA FINANCE] bootstrap_account_created=${String(bootstrapCreated && bootstrapReady)}`)
+  if (!bootstrapReady) return { ok: false, reason: 'database_unavailable' as const }
+
+  const existing = await admin.from('transactions').select('id, description, amount, type, transaction_date, category_id').eq('whatsapp_message_id', whatsappMessageId).eq('user_id', userId).maybeSingle()
+  if (existing.data?.id) {
+    const existingCategory = existing.data.category_id ? await admin.from('categories').select('name').eq('id', existing.data.category_id).eq('user_id', userId).maybeSingle() : null
+    return { ok: true as const, transactionId: existing.data.id, duplicate: true as const, categoryName: existingCategory?.data?.name ?? 'Sem categoria', persisted: existing.data }
+  }
 
   const [{ data: accounts, error: accountError }, { data: categories, error: categoryError }] = await Promise.all([
     admin.from('accounts').select('id, name').eq('user_id', userId).order('created_at', { ascending: true }),
     admin.from('categories').select('id, name').eq('user_id', userId),
   ])
 
+  console.info(`[WA FINANCE] account_resolved=${String(!accountError && Boolean(accounts?.length))}`)
   if (accountError || !accounts?.length) return { ok: false, reason: 'account_required' as const }
   if (accounts.length > 1) return { ok: false, reason: 'multiple_accounts' as const }
 
-  const category = categories?.find((item) => {
-    const name = item.name.toLowerCase()
-    return intent.type === 'expense'
-      ? Boolean(intent.categoryCandidate) && /aliment|mercado|supermercado|gasto|despesa/.test(name)
-      : /receita|salário|salario|renda/.test(name)
-  })
+  const candidate = intent.categoryCandidate ?? inferCategoryCandidate(intent.description, intent.type)
+  const category = categories?.find((item) => candidate && normalizeCategoryName(item.name) === normalizeCategoryName(candidate))
+    ?? categories?.find((item) => normalizeCategoryName(item.name) === normalizeCategoryName('Outros'))
   const categoryName = category?.name ?? 'Sem categoria'
+  const persistedDescription = normalizeTransactionDescription(intent.description)
   const { data, error } = await admin.from('transactions').insert({
     user_id: userId,
     account_id: accounts[0].id,
     category_id: category?.id ?? null,
     whatsapp_message_id: whatsappMessageId,
-    description: intent.description,
+    description: persistedDescription,
     amount: intent.amount,
     type: intent.type,
     transaction_date: intent.transactionDate,
@@ -280,20 +323,43 @@ async function createTransaction(admin: WebhookAdminClient, userId: string, inte
   if (error) {
     if (error.code === '23505') {
       const retry = await admin.from('transactions').select('id').eq('whatsapp_message_id', whatsappMessageId).maybeSingle()
-      if (retry.data?.id) return { ok: true as const, transactionId: retry.data.id, duplicate: true as const, categoryName }
+      if (retry.data?.id) return { ok: true as const, transactionId: retry.data.id, duplicate: true as const, categoryName, persisted: retry.data }
     }
     console.error('[KEVO WhatsApp] transaction insert failed', { code: error.code })
     return { ok: false, reason: 'insert_failed' as const }
   }
-  return { ok: true as const, transactionId: data.id, duplicate: false as const, categoryName }
+  return { ok: true as const, transactionId: data.id, duplicate: false as const, categoryName, persisted: { ...data, description: persistedDescription, amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate, category_id: category?.id ?? null } }
 }
 
-async function updateOwnedTransaction(admin: WebhookAdminClient, phone: string, transactionId: string, intent: FinanceIntent) {
-  if (!admin) return false
-  const user = await findWhatsAppUser(admin, phone)
-  if (!user) return false
-  const { error } = await admin.from('transactions').update({ description: intent.description, amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate }).eq('id', transactionId).eq('user_id', user.id)
-  return !error
+async function updateOwnedTransaction(admin: WebhookAdminClient, userId: string, transactionId: string, fields: Partial<Pick<FinanceIntent, 'description' | 'amount' | 'transactionDate'>> & { categoryName?: string }) {
+  console.info('[WA ACTION] edit_update_attempted=true')
+  if (!admin || !/^[0-9a-f-]{36}$/i.test(transactionId)) return { ok: false as const, reason: 'invalid_request' as const }
+  const { data: existing, error: lookupError } = await admin.from('transactions').select('id, description, amount, type, transaction_date, category_id').eq('id', transactionId).eq('user_id', userId).maybeSingle()
+  if (lookupError || !existing) return { ok: false as const, reason: 'not_owned' as const }
+  const patch: Record<string, unknown> = {}
+  if (fields.description) patch.description = normalizeTransactionDescription(fields.description)
+  if (fields.amount !== undefined && Number.isFinite(fields.amount) && fields.amount > 0 && fields.amount <= 100000000) patch.amount = Number(fields.amount.toFixed(2))
+  if (fields.transactionDate) {
+    const parsed = new Date(`${fields.transactionDate}T00:00:00Z`)
+    if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== fields.transactionDate) return { ok: false as const, reason: 'invalid_date' as const }
+    patch.transaction_date = fields.transactionDate
+  }
+  if (fields.categoryName) {
+    const { data: category } = await admin.from('categories').select('id').eq('user_id', userId).ilike('name', fields.categoryName).maybeSingle()
+    if (!category?.id) return { ok: false as const, reason: 'invalid_category' as const }
+    patch.category_id = category.id
+  }
+  if (!Object.keys(patch).length) return { ok: false as const, reason: 'no_valid_fields' as const }
+  const { data: updated, error } = await admin.from('transactions').update(patch).eq('id', transactionId).eq('user_id', userId).select('description, amount, transaction_date, type, category_id').maybeSingle()
+  if (error || !updated) {
+    console.info('[WA ACTION] edit_update_success=false')
+    return { ok: false as const, reason: 'update_failed' as const }
+  }
+  const { data: category } = updated.category_id
+    ? await admin.from('categories').select('name').eq('id', updated.category_id).eq('user_id', userId).maybeSingle()
+    : { data: null }
+  console.info('[WA ACTION] edit_update_success=true')
+  return { ok: true as const, updated, categoryName: category?.name ?? 'Sem categoria' }
 }
 
 async function deleteOwnedTransaction(admin: WebhookAdminClient, phone: string, transactionId: string) {
@@ -305,20 +371,23 @@ async function deleteOwnedTransaction(admin: WebhookAdminClient, phone: string, 
   return data?.id ? { ok: true as const } : { ok: false as const, reason: 'not_owned' }
 }
 
-async function markInboundProcessed(
+  async function markInboundProcessed(
   admin: WebhookAdminClient,
   messageId: string,
-) {
+  preservePending = false,
+  ) {
   if (!admin) return
-
-  const { error } = await admin
-    .from('whatsapp_messages')
-    .update({
-      status: 'processed',
-      processed_at: new Date().toISOString(),
-    })
-    .eq('wa_message_id', messageId)
-    .eq('direction', 'inbound')
+  
+  const query = admin
+  .from('whatsapp_messages')
+  .update({
+  ...(preservePending ? {} : { status: 'processed' }),
+  processed_at: preservePending ? null : new Date().toISOString(),
+  })
+  .eq('wa_message_id', messageId)
+  .eq('direction', 'inbound')
+  if (preservePending) query.in('status', ['pending_edit', 'pending_delete'])
+  const { error } = await query
 
   if (error) {
     console.error('[KEVO WhatsApp] failed to mark inbound processed', {
@@ -380,11 +449,37 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`))
 }
 
-function buildTransactionConfirmation(displayName: string | null, intent: FinanceIntent, categoryName: string, transactionId?: string) {
-  const firstName = displayName?.trim().split(/\\s+/)[0] || 'você'
-  const greeting = `Olá, ${firstName}! Sua movimentação foi registrada por aqui.`
-  const actions = transactionId ? `\\n[Editar transação: edit_transaction:${transactionId}]\\n[Excluir transação: delete_transaction:${transactionId}]` : ''
-  return `${greeting}\\n\\n🧾 *Resumo da transação:*\\n\\n*Descrição:* ${intent.description}\\n*Valor:* ${formatAmount(intent.amount)}\\n*Categoria:* ${categoryName}\\n*Data:* ${formatDate(intent.transactionDate)}\\n\\n✅ *Status:* Registrado com sucesso\\n\\n📊 Para visualizar mais detalhes e relatórios, acesse seu painel KEVO:\\nhttps://panel.kevoia.com\\n\\nSe precisar de algo a mais, é só me chamar!${actions}`
+async function createContextualGreeting(displayName: string | null, persisted: { description: string; type: string; categoryName: string }) {
+  const firstName = displayName?.trim().split(/\s+/)[0] || null
+  const fallback = firstName ? `Olá, ${firstName}! Transação registrada com sucesso.` : 'Transação registrada com sucesso.'
+  const prompt = `Escreva uma única introdução curta, natural e criativa em português-BR para uma movimentação financeira já persistida pela KEVO. ${firstName ? `O primeiro nome confiável da pessoa é ${firstName}; use-o apenas ocasionalmente.` : 'Não há nome confiável disponível; não invente um.'} Tipo: ${persisted.type}. Descrição: ${persisted.description}. Categoria: ${persisted.categoryName}. Faça um comentário leve, hipotético e semanticamente seguro sobre o contexto da descrição, sem repetir valor, descrição ou categoria, pois o resumo estruturado virá logo abaixo. Não diga “Prontinho”, “Tudo anotado por aqui” ou faça pergunta genérica. Não invente estabelecimento, produto, localização, pessoa, motivo, evento ou qualquer fato. Máximo de duas frases curtas e 220 caracteres.`
+  try {
+    const generated = await generateWhatsAppReply(prompt)
+    const clean = generated?.replace(/\s+/g, ' ').trim()
+    if (!clean || clean.length > 220) return fallback
+    return clean
+  } catch (error) {
+    console.error('[KEVO WhatsApp] contextual greeting failed', { error: error instanceof Error ? error.name : 'unknown_error' })
+    return fallback
+  }
+}
+
+function buildTransactionConfirmation(greeting: string, persisted: { description: string; amount: number; categoryName: string; transactionDate: string }) {
+  return `${greeting}
+
+🧾 *Resumo da transação:*
+
+📝 *Descrição:* ${persisted.description}
+💰 *Valor:* ${formatAmount(persisted.amount)}
+🏷️ *Categoria:* ${persisted.categoryName}
+📅 *Data:* ${formatDate(persisted.transactionDate)}
+
+✅ *Status:* Registrado com sucesso
+
+📊 Para visualizar mais detalhes e relatórios, acesse seu painel:
+https://panel.kevoia.com
+
+Se precisar de algo a mais, é só me chamar! 😊`
 }
 
 async function createReply(message: string) {
@@ -580,6 +675,36 @@ export async function POST(request: Request) {
       continue
     }
 
+    const activationAdmin = await getWebhookAdminClient()
+    const activationUser = activationAdmin
+      ? await findWhatsAppUser(activationAdmin, message.from)
+      : null
+
+    /*
+     * A ativação é resolvida antes do claim inbound. Em awaiting_password,
+     * a senha nunca entra em whatsapp_messages nem no pipeline financeiro.
+     */
+  if (activationAdmin && !activationUser) {
+    let activation: Awaited<ReturnType<typeof handleActivationMessage>>
+    try {
+      activation = await handleActivationMessage(activationAdmin, message.from, message.text)
+    } catch (error) {
+      console.error('[KEVO WhatsApp] activation failed before finance flow', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      const outbound = await sendWhatsAppTextMessage(message.from, 'Não foi possível processar a ativação agora. Tente novamente.')
+      if (outbound.ok) await recordOutbound(activationAdmin, outbound.messageId, message.from)
+      processed += 1
+      continue
+    }
+    if (activation.handled) {
+      const outbound = await sendWhatsAppTextMessage(message.from, activation.reply)
+      if (outbound.ok) await recordOutbound(activationAdmin, outbound.messageId, message.from)
+      processed += 1
+      continue
+    }
+  }
+
     const claim = await claimInboundMessage(
       message.messageId,
       message.from,
@@ -605,45 +730,127 @@ export async function POST(request: Request) {
     })
 
     try {
+      const webhookStartedAt = Date.now()
+      console.info('[WA PERF] webhook_start')
       const user = findWhatsAppUser(claim.admin, message.from)
       let reply: string
       let generatedByAi = false
 
       const linkedUser = await user
-      const intent = parseFinanceIntent(message.text)
+      console.info(`[WA PERF] user_resolved_ms=${Date.now() - webhookStartedAt}`)
       let transactionId: string | undefined
       let categoryName = 'Sem categoria'
+      let actionButtons: Array<{ id: string; title: string }> | undefined
+      let preservePendingAction = false
+      const payload = parseActionPayload(message.text)
+      const pendingLookupStartedAt = Date.now()
+      const pending = linkedUser ? await getPendingAction(claim.admin, message.from, linkedUser.id) : null
+      console.info(`[WA PERF] pending_lookup_ms=${Date.now() - pendingLookupStartedAt}`)
+      const mediaStartedAt = Date.now()
+      const mediaExtraction = message.media ? await processWhatsAppMedia(message.media) : null
+      const mediaText = mediaExtraction ? mediaExtractionToText(mediaExtraction) : ''
+      if (message.media) {
+        const mediaDuration = Date.now() - mediaStartedAt
+        console.info(`[WA ${message.media.kind.toUpperCase()}] financial_processing_ms=${mediaDuration}`)
+        console.info(`[WA ${message.media.kind.toUpperCase()}] total_ms=${mediaDuration}`)
+      }
+      const effectiveMessageText = mediaText || message.text
+      const mediaUnavailable = Boolean(message.media && !mediaText)
+      if (message.media && mediaText) console.info(`[WA ${message.media.kind.toUpperCase()}] stage=text_routing`)
+      const editParseStartedAt = Date.now()
+      const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText, { source: message.media?.kind === 'audio' ? 'audio' : 'text' })
+      console.info(`[WA PERF] edit_parse_ms=${Date.now() - editParseStartedAt}`)
 
-      const editMatch = message.text.match(/^edit_transaction:([0-9a-f-]{36})$/i)
-      const deleteMatch = message.text.match(/^delete_transaction:([0-9a-f-]{36})$/i)
-      const confirmDeleteMatch = message.text.match(/^confirm_delete_transaction:([0-9a-f-]{36})$/i)
-      const pendingDelete = claim.admin ? await claim.admin.from('whatsapp_messages').select('metadata').eq('from_phone', message.from).eq('status', 'pending_delete').order('created_at', { ascending: false }).limit(1).maybeSingle() : null
-      const pendingDeleteId = pendingDelete?.data?.metadata && typeof pendingDelete.data.metadata === 'object' ? (pendingDelete.data.metadata as { transactionId?: string }).transactionId : undefined
-      const pendingEdit = claim.admin ? await claim.admin.from('whatsapp_messages').select('metadata').eq('from_phone', message.from).eq('status', 'pending_edit').order('created_at', { ascending: false }).limit(1).maybeSingle() : null
-      const pendingEditId = pendingEdit?.data?.metadata && typeof pendingEdit.data.metadata === 'object' ? (pendingEdit.data.metadata as { transactionId?: string }).transactionId : undefined
-      if (editMatch) {
-        reply = 'Envie a nova descrição e valor da transação para atualizar. Vou validar novamente sua autorização antes de alterar.'
-        if (claim.admin && linkedUser) await claim.admin.from('whatsapp_messages').update({ status: 'pending_edit', user_id: linkedUser.id, metadata: { transactionId: editMatch[1] } }).eq('wa_message_id', message.messageId)
-      } else if (pendingEditId && intent && linkedUser) {
-        const updated = await updateOwnedTransaction(claim.admin, message.from, pendingEditId, intent)
-        reply = updated ? `Transação atualizada com sucesso.\n\n*Descrição:* ${intent.description}\n*Valor:* ${formatAmount(intent.amount)}\n*Data:* ${formatDate(intent.transactionDate)}` : 'Não consegui atualizar essa transação. Verifique se ela pertence à sua conta.'
-      } else if (pendingEditId) {
-        reply = 'Envie a nova descrição e valor da transação, por exemplo: “gastei 60 no mercado”.'
-      } else if (pendingDeleteId && /^confirmar exclusão$/i.test(message.text)) {
-        const deleted = await deleteOwnedTransaction(claim.admin, message.from, pendingDeleteId)
-        reply = deleted.ok ? 'Transação excluída com sucesso.' : 'Não consegui excluir essa transação. Verifique se ela pertence à sua conta.'
-      } else if (deleteMatch) {
-        reply = `Você deseja excluir esta transação? Responda “confirmar exclusão” para continuar ou “cancelar” para manter.`
-        if (claim.admin && linkedUser) await claim.admin.from('whatsapp_messages').update({ status: 'pending_delete', user_id: linkedUser.id, metadata: { transactionId: deleteMatch[1] } }).eq('wa_message_id', message.messageId)
-      } else if (confirmDeleteMatch) {
-        const deleted = await deleteOwnedTransaction(claim.admin, message.from, confirmDeleteMatch[1])
-        reply = deleted.ok ? 'Transação excluída com sucesso.' : 'Não consegui excluir essa transação. Verifique se ela pertence à sua conta.'
+      if (!linkedUser) {
+        reply = 'Não encontrei uma conta KEVO vinculada a este número.'
+      } else if (mediaUnavailable) {
+        reply = message.type === 'audio' ? 'Não consegui entender o áudio com segurança. Envie novamente ou escreva a mensagem, por favor.' : 'Não consegui extrair dados financeiros com segurança desta mídia. Confira o recibo e envie uma mensagem com valor e estabelecimento.'
+      } else if (payload?.action === 'edit_transaction') {
+        const owned = await claim.admin?.from('transactions').select('id').eq('id', payload.transactionId).eq('user_id', linkedUser.id).maybeSingle()
+        if (!owned?.data?.id) reply = 'Não encontrei essa transação na sua conta.'
+        else {
+          const created = await createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_edit', payload.transactionId)
+          preservePendingAction = created
+          console.info(`[WA ACTION] callback_edit_received=${String(created)}`)
+          console.info(`[WA ACTION] pending_edit_created=${String(created)}`)
+          console.info('[WA ACTION] pending_action=pending_edit')
+          reply = buildPendingEditReply()
+        }
+      } else if (payload?.action === 'delete_transaction') {
+        const owned = await claim.admin?.from('transactions').select('id').eq('id', payload.transactionId).eq('user_id', linkedUser.id).maybeSingle()
+        if (!owned?.data?.id) reply = 'Não encontrei essa transação na sua conta.'
+        else {
+          const created = await createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_delete', payload.transactionId)
+          preservePendingAction = created
+          console.info('[WA ACTION] delete_confirmation_started=true')
+          reply = buildPendingDeleteReply()
+          actionButtons = [
+            { id: `confirm_delete:${payload.transactionId}`, title: 'Confirmar exclusão' },
+            { id: `cancel_delete:${payload.transactionId}`, title: 'Cancelar' },
+          ]
+        }
+      } else if (payload?.action === 'confirm_delete' || payload?.action === 'confirm_delete_transaction') {
+        const active = pending?.actionType === 'pending_delete' && pending.transactionId === payload.transactionId ? pending : null
+        if (!active) reply = 'Essa confirmação expirou. Use o botão Excluir novamente.'
+        else {
+          console.info('[WA ACTION] delete_confirmed=true')
+          const deleted = await deleteOwnedTransaction(claim.admin, message.from, active.transactionId)
+          await consumePendingAction(claim.admin, active.messageId, 'consumed')
+          reply = deleted.ok || deleted.reason === 'not_owned' ? (deleted.ok ? 'Transação excluída com sucesso.' : 'Essa transação já não está disponível.') : 'Não consegui excluir essa transação agora.'
+          if (deleted.ok) console.info('[WA ACTION] delete_success=true')
+        }
+      } else if (payload?.action === 'cancel_delete') {
+        const active = pending?.actionType === 'pending_delete' && pending.transactionId === payload.transactionId ? pending : null
+        if (!active) reply = 'Essa ação expirou. Nenhuma transação foi alterada.'
+        else {
+          await consumePendingAction(claim.admin, active.messageId, 'consumed')
+          reply = 'Tudo certo. A transação foi mantida.'
+        }
+      } else if (pending?.actionType === 'pending_delete' && (isConfirmationText(effectiveMessageText) || isCancellationText(effectiveMessageText))) {
+        if (isCancellationText(effectiveMessageText)) {
+          await consumePendingAction(claim.admin, pending.messageId, 'consumed')
+          reply = 'Tudo certo. A transação foi mantida.'
+        } else {
+          console.info('[WA ACTION] delete_confirmed=true')
+          const deleted = await deleteOwnedTransaction(claim.admin, message.from, pending.transactionId)
+          await consumePendingAction(claim.admin, pending.messageId, 'consumed')
+          reply = deleted.ok ? 'Transação excluída com sucesso.' : deleted.reason === 'not_owned' ? 'Essa transação já não está disponível.' : 'Não consegui excluir essa transação agora.'
+          if (deleted.ok) console.info('[WA ACTION] delete_success=true')
+        }
+      } else if (pending?.actionType === 'pending_edit' && isCancellationText(effectiveMessageText)) {
+        await consumePendingAction(claim.admin, pending.messageId, 'consumed')
+        reply = 'Tudo certo. A edição foi cancelada e a transação permaneceu igual.'
+      } else if (pending?.actionType === 'pending_edit') {
+        const fields = parseEditFields(effectiveMessageText)
+        const looksLikeNewTransaction = /^(?:gastei|paguei|comprei|recebi|ganhei|entrou|saiu)\b/i.test(effectiveMessageText.trim())
+        if (!fields && looksLikeNewTransaction) reply = 'Você está editando uma transação. Quer alterar a transação atual ou registrar esse gasto como uma nova movimentação? Responda “cancelar” para sair.'
+        else if (!fields) reply = buildPendingEditReply()
+        else {
+          const updateStartedAt = Date.now()
+          const updated = await updateOwnedTransaction(claim.admin, linkedUser.id, pending.transactionId, fields)
+          console.info(`[WA PERF] transaction_update_ms=${Date.now() - updateStartedAt}`)
+          if (!updated.ok) reply = updated.reason === 'not_owned' ? 'Não encontrei essa transação na sua conta.' : 'Não consegui aplicar uma alteração válida. Tente informar valor, descrição, categoria ou data.'
+          else {
+            const consumed = await consumePendingAction(claim.admin, pending.messageId, 'consumed')
+            console.info(`[WA ACTION] pending_consumed=${String(consumed)}`)
+            reply = `Pronto! Atualizei sua transação.\n\n🧾 *Resumo da transação:*\n\n📝 *Descrição:* ${updated.updated.description}\n💰 *Valor:* ${formatAmount(Number(updated.updated.amount))}\n🏷️ *Categoria:* ${updated.categoryName}\n📅 *Data:* ${formatDate(String(updated.updated.transaction_date))}\n\n✅ *Status:* Atualizado com sucesso`
+            transactionId = pending.transactionId
+            actionButtons = [
+              { id: `edit_transaction:${transactionId}`, title: 'Editar transação' },
+              { id: `delete_transaction:${transactionId}`, title: 'Excluir transação' },
+            ]
+          }
+        }
       } else if (intent && linkedUser) {
         const result = await createTransaction(claim.admin, linkedUser.id, intent, message.messageId)
         if (result.ok) {
           transactionId = result.transactionId
           categoryName = result.categoryName
-          reply = buildTransactionConfirmation(linkedUser.display_name, intent, categoryName, transactionId)
+          const persisted = result.persisted && 'description' in result.persisted
+            ? result.persisted
+            : { description: normalizeTransactionDescription(intent.description), amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate, category_id: null }
+          const greeting = await createContextualGreeting(linkedUser.display_name, { description: String(persisted.description), type: String(persisted.type), categoryName })
+          reply = buildTransactionConfirmation(greeting, { description: String(persisted.description), amount: Number(persisted.amount), categoryName, transactionDate: String(persisted.transaction_date) })
         } else if (result.reason === 'multiple_accounts') {
           await saveMissingAccountIntent(claim.admin, message.messageId, linkedUser.id, intent)
           reply = 'Encontrei mais de uma conta ativa no KEVO. Qual conta devo usar para registrar essa movimentação?'
@@ -654,22 +861,29 @@ export async function POST(request: Request) {
           reply = 'Não consegui registrar agora. Nenhuma alteração financeira foi feita.'
         }
       } else {
+        console.info('[WA ACTION] fallback_reached=true')
         const generated = await createReply(message.text)
         reply = generated.reply
         generatedByAi = generated.generatedByAi
       }
 
+      console.info('[WA ACTION] fallback_reached=false')
       console.info('[KEVO WhatsApp] outbound attempt started', {
         destination: maskPhone(message.from),
         generatedByAi,
       })
 
-      const result = transactionId
-        ? await sendWhatsAppInteractiveMessage(message.from, reply, [
+      const buttons = actionButtons ?? (transactionId
+        ? [
             { id: `edit_transaction:${transactionId}`, title: 'Editar transação' },
             { id: `delete_transaction:${transactionId}`, title: 'Excluir transação' },
-          ])
+          ]
+        : undefined)
+      const whatsappSendStartedAt = Date.now()
+      const result = buttons
+        ? await sendWhatsAppInteractiveMessage(message.from, reply, buttons)
         : await sendWhatsAppTextMessage(message.from, reply)
+      console.info(`[WA PERF] whatsapp_send_ms=${Date.now() - whatsappSendStartedAt}`)
 
       if (!result.ok) {
         console.error('[KEVO WhatsApp] outbound failed', {
@@ -691,11 +905,13 @@ export async function POST(request: Request) {
       )
 
       await markInboundProcessed(
-        claim.admin,
-        message.messageId,
-      )
+  claim.admin,
+  message.messageId,
+  preservePendingAction,
+  )
 
       processed += 1
+      console.info(`[WA PERF] total_ms=${Date.now() - webhookStartedAt}`)
 
       console.info('[KEVO WhatsApp] outbound accepted by Meta', {
         messageId: result.messageId,

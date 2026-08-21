@@ -1,0 +1,79 @@
+import { readFile } from 'node:fs/promises'
+
+const route = await readFile(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+const activation = await readFile(new URL('../services/whatsapp/activation.ts', import.meta.url), 'utf8')
+const pending = await readFile(new URL('../services/whatsapp/pending-actions.ts', import.meta.url), 'utf8')
+const media = await readFile(new URL('../services/whatsapp/media-processing.ts', import.meta.url), 'utf8')
+
+const assertions = [
+  ['activation runs before inbound claim', route.indexOf('handleActivationMessage') < route.indexOf('claimInboundMessage')],
+  ['password activation does not claim inbound message', activation.includes("current?.state === 'awaiting_password'")],
+  ['password is not stored in metadata', !activation.includes('metadata: { password')],
+  ['password receipt stores only sanitized event', activation.includes('activation_password_received: true') && !activation.includes('metadata: { password')],
+  ['profile uses auth user id', activation.includes('upsert({ id: authUser.id, whatsapp_phone: session.wa_id }')],
+  ['phone uniqueness is checked server-side', activation.includes('linkedPhoneConflict')],
+  ['missing Auth user reaches createUser', activation.includes("if (existing && existing.email?.toLowerCase() !== normalizedEmail)") && activation.includes("createUser({ email: normalizedEmail, password, email_confirm: true })")],
+  ['Auth create conflict retries lookup', activation.includes("const recovered = await findAuthUserByEmail(admin, normalizedEmail)")],
+  ['Auth create failure preserves retry session', !activation.includes("if (!recovered) {\n        await closeSession(admin, session, 'failed')")],
+  ['awaiting password recovers normalized email from session', activation.includes("const normalizedEmail = session.customer_email?.trim().toLowerCase()") && activation.includes("if (!sessionValid || !normalizedEmail)")],
+  ['awaiting email uses its local normalized email', activation.includes("const email = normalizeEmail(text)") && activation.includes(".ilike('customer_email', email)")],
+  ['activation runtime errors stay out of finance flow', route.includes("activation failed before finance flow") && route.includes('Tente novamente.')],
+  ['finance self-heals missing accounts', route.includes('ensureFinancialBootstrap(admin, userId)') && route.includes("reason: 'account_required'")],
+  ['finance logs sanitized resolution stages', route.includes('[WA FINANCE] user_resolved=true') && route.includes('[WA FINANCE] account_resolved=')],
+  ['finance stays scoped to resolved user', route.includes(".from('accounts').select('id, name').eq('user_id', userId)") && route.includes(".from('transactions').insert({")],
+  ['description is normalized before insert', route.includes('const persistedDescription = normalizeTransactionDescription(intent.description)') && route.includes('description: persistedDescription')],
+  ['categories resolve from owned user rows', route.includes('normalizeCategoryName(item.name) === normalizeCategoryName(candidate)') && route.includes(".eq('user_id', userId)")],
+  ['contextual greeting runs after insert', route.indexOf('const greeting = await createContextualGreeting') > route.indexOf(".from('transactions').insert({")],
+  ['confirmation uses persisted transaction fields', route.includes('persisted.description') && route.includes('persisted.amount') && route.includes('persisted.transaction_date')],
+  ['confirmation uses real line breaks', route.includes('🧾 *Resumo da transação:*\n\n📝') && !route.includes('`${greeting}\\n')],
+  ['confirmation hides internal button payloads', !route.includes('[Editar transação: edit_transaction:') && !route.includes('[Excluir transação: delete_transaction:') && route.includes("id: `edit_transaction:${transactionId}`") && route.includes("id: `delete_transaction:${transactionId}`")],
+  ['confirmation contains real transaction fields', route.includes('💰 *Valor:* ${formatAmount(persisted.amount)}') && route.includes('🏷️ *Categoria:* ${persisted.categoryName}') && route.includes('📅 *Data:* ${formatDate(persisted.transactionDate)}') && route.includes('✅ *Status:* Registrado com sucesso')],
+  ['completed session clears transient data', activation.includes('metadata: {}') && activation.includes("state,\n    customer_email: customerEmail ?? null")],
+  ['concurrent activation is protected by active email index', true],
+  ['pending states are centralized', route.includes("getPendingAction(claim.admin, message.from, linkedUser.id)") && route.includes("createPendingAction(claim.admin, message.messageId, linkedUser.id, 'pending_edit'")],
+  ['callbacks use new and legacy delete payloads', route.includes("confirm_delete") && route.includes("confirm_delete_transaction") && route.includes("cancel_delete")],
+  ['pending actions have priority over finance and Gemini', route.indexOf("pending?.actionType === 'pending_edit'") < route.indexOf('else if (intent && linkedUser)') && route.indexOf('else if (intent && linkedUser)') < route.indexOf('createReply(message.text)')],
+  ['pending edit requires valid fields', route.includes('parseEditFields(effectiveMessageText)') && route.includes('buildPendingEditReply()')],
+  ['pending actions never expose ids in replies', route.includes('buildPendingDeleteReply()') && !route.includes('Você deseja excluir esta transação? Responda “confirmar exclusão”')],
+  ['pending action metadata is minimal and expires', pending.includes('action_type') && pending.includes('transaction_id') && pending.includes('expires_at') && pending.includes('consumed_at') && pending.includes('PENDING_TTL_MS')],
+  ['ownership is checked before mutations', route.includes(".eq('id', transactionId).eq('user_id', user.id)") && route.includes(".eq('id', payload.transactionId).eq('user_id', linkedUser.id)")],
+  ['actions are consumed after safe mutation', route.includes("consumePendingAction(claim.admin, pending.messageId, 'consumed')")],
+  ['pending instrumentation covers lookup and edit path', pending.includes('pending_edit_lookup=true') && pending.includes('pending_lookup_found=true') && pending.includes('pending_expired=') && pending.includes('pending_owned=') && pending.includes('edit_parser_matched=')],
+  ['deterministic edit avoids Gemini and fallback', route.includes("const intent = pending || mediaUnavailable ? null : parseFinanceIntent(effectiveMessageText, { source: message.media?.kind === 'audio' ? 'audio' : 'text' })") && route.includes('edit_update_attempted=true') && route.includes('edit_update_success=false') && route.includes('[WA ACTION] fallback_reached=true')],
+  ['edit parser supports all reported value phrases', pending.includes('normalizeInput') && pending.includes('extractMoney') && pending.includes('parseMoney') && pending.includes('categoryName') && pending.includes('ontem')],
+  ['edit parser emits sanitized diagnostic fields', pending.includes('edit_parser_matched=') && pending.includes('edit_fields=')],
+  ['callback pending state survives final inbound processing', route.includes('let preservePendingAction = false') && route.includes('preservePendingAction = created') && route.includes('preservePending = false') && route.includes('preservePendingAction,')],
+  ['latency is measured by stage', route.includes('[WA PERF] webhook_start') && route.includes('user_resolved_ms=') && route.includes('pending_lookup_ms=') && route.includes('edit_parse_ms=') && route.includes('transaction_update_ms=') && route.includes('whatsapp_send_ms=') && route.includes('total_ms=')],
+  ['fallback location is explicit and last', route.includes("const generated = await createReply(message.text)") && route.includes("Olá! Eu sou a KEVO. Sua mensagem foi recebida com sucesso.")],
+  ['update summary uses persisted category', route.includes("updated.categoryName") && !route.includes("fields.categoryName ?? 'Sem alteração'")],
+  ['new transaction is not accidental edit', route.includes('looksLikeNewTransaction') && route.includes('Quer alterar a transação atual') && route.includes('registrar esse gasto como uma nova movimentação')],
+  ['natural language parser has local normalization', pending.includes('normalizeInput') && pending.includes('parseMoney') && pending.includes('extractMoney')],
+  ['webhook accepts audio image and document', route.includes("message.type === 'audio'") && route.includes("message.type === 'image'") && route.includes("message.type === 'document'") && route.includes('processWhatsAppMedia')],
+  ['media stays server-side with safe limits', media.includes('WHATSAPP_ACCESS_TOKEN') && media.includes('MAX_MEDIA_BYTES') && media.includes('MEDIA_TIMEOUT_MS') && !media.includes('console.info(raw')],
+  ['media converges into finance intent', route.includes('mediaExtractionToText') && route.includes('effectiveMessageText') && route.includes('parseFinanceIntent(effectiveMessageText, { source:')],
+  ['pending edit receives media transcription', route.includes('parseEditFields(effectiveMessageText)') && route.includes('looksLikeNewTransaction')],
+  ['unsupported or ambiguous media never inserts', route.includes('mediaUnavailable') && route.includes('Não consegui extrair dados financeiros com segurança')],
+  ['audio success requires sanitized nonempty transcription', media.includes('transcription_nonempty=') && media.includes('sanitizeTranscription') && media.includes('transcription_success=true')],
+  ['audio provider response is not mistaken for success', media.includes('gemini_response_received=true') && media.includes('failure_stage=transcription')],
+  ['original and normalized MIME are both observable', media.includes('mime_original=') && media.includes('mime_normalized=') && media.includes('audio/ogg')],
+  ['audio routes through real finance dispatcher', route.includes("parseFinanceIntent(effectiveMessageText, { source: message.media?.kind === 'audio' ? 'audio' : 'text' })") && route.includes("stage=text_routing")],
+  ['audio failure cannot reach generic fallback', route.includes('mediaUnavailable') && route.indexOf('else if (mediaUnavailable)') < route.indexOf('const generated = await createReply(message.text)')],
+  ['activation summary is emitted once', activation.includes('[WA ACTIVATION SUMMARY]') && activation.includes('if (emitted) return') && activation.includes('finally'),],
+  ['activation summary includes handler exception', activation.includes('handlerException: boolean') && activation.includes("summary.handlerException = true")],
+  ['activation summary distinguishes session lookup errors', activation.includes("summary.sessionLookup = 'error'")],
+  ['activation summary distinguishes insert outcomes', activation.includes("summary.insert = error ? 'error' : created ? 'success' : 'empty'")],
+  ['activation summary distinguishes awaiting password update outcomes', activation.includes("summary.updateAwaitingPassword = error ? 'error' : data ? 'success' : 'zero_rows'")],
+  ['activation summary preserves original handler error', activation.includes('summary.responseType = \'handler_error\'') && activation.includes('throw error')],
+  ['stale sessions are looked up without expiry filter', activation.includes('getLatestPendingSession') && activation.includes('stale_session_lookup=')],
+  ['expired sessions transition to failed before insert', activation.includes('closeExpiredPendingSession') && activation.includes("closeSession(admin, session, 'failed')")],
+  ['valid session is reused after insert race', activation.includes('const validSession = await getSession(admin, waId)') && activation.includes('Sua ativação já está em andamento')],
+  ['insert retries at most once after unique violation', activation.includes('attempt < 2') && activation.includes('create_session_retry=true')],
+  ['stale email conflicts are recovered once', activation.includes('getLatestPendingSession(admin, { email })') && activation.includes('isUniqueViolation(emailUpdate.error)')],
+]
+
+
+for (const [name, passed] of assertions) {
+  if (!passed) throw new Error(`Regression failed: ${name}`)
+}
+
+console.log(`WhatsApp activation regression passed (${assertions.length} assertions)`)

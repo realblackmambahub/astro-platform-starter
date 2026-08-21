@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import type { User } from '@supabase/supabase-js'
 import { AuthDivider, AuthField, AuthHeader, AuthLink, KevoAuthShell, PrimaryAuthButton } from '@/components/auth/kevo-auth-shell'
 
 export default function LoginPage() {
@@ -17,9 +18,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     let active = true
-    void createClient().auth.getUser().then(({ data }) => {
+    void createClient().auth.getUser().then((result: { data: { user: User | null } }) => {
       if (!active) return
-      if (data.user) router.replace('/')
+      if (result.data.user) router.replace('/')
       else setCheckingSession(false)
     })
     return () => { active = false }

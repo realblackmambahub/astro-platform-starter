@@ -391,10 +391,6 @@ export async function generateWhatsAppReply(
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
 
-        thinkingConfig: {
-          thinkingLevel: 'minimal',
-        },
-
         temperature: 0.65,
         maxOutputTokens: 1200,
       },

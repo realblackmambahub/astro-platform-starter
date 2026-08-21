@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 
 export function SessionGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -24,7 +25,7 @@ export function SessionGuard({ children }: { children: React.ReactNode }) {
     }
 
     void verify()
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       if (!active) return
       if (event === 'SIGNED_OUT' || !session) {
         router.replace(`/auth/login?next=${encodeURIComponent(pathname || '/')}`)
