@@ -5,7 +5,14 @@ import { parseFinanceIntent, getBrazilCivilDate, inferCategoryCandidate } from '
 const route = await readFile(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
 assert.match(route, /contextual greeting failed/)
 assert.match(route, /Transação registrada com sucesso/)
-assert.doesNotMatch(route, /Se precisar de algo a mais, é só me chamar/)
+assert.match(route, /Se precisar de algo a mais, é só me chamar! 😊/)
+assert.match(route, /firstName = displayName\?\.trim\(\)\.split\(\/\\s\+\/\)\[0\] \|\| null/)
+assert.match(route, /Não há nome confiável disponível; não invente um/)
+assert.match(route, /sem repetir valor, descrição ou categoria/)
+assert.match(route, /persisted\.description/)
+assert.match(route, /persisted\.amount/)
+assert.match(route, /id: `edit_transaction:\$\{transactionId\}`/)
+assert.match(route, /id: `delete_transaction:\$\{transactionId\}`/)
 
 const cases = [
   ['gastei 50 reais com sinuca', 'expense', 50, 'Sinuca', 'Lazer'],

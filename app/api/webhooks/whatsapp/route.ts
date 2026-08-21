@@ -449,11 +449,10 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`))
 }
 
-async function createContextualGreeting(displayName: string | null, persisted: { description: string; type: string; categoryName: string; amount: number }) {
-  const fallback = persisted.type === 'expense'
-    ? `Transação registrada com sucesso: ${persisted.description} entrou no controle.`
-    : `Receita registrada com sucesso: ${persisted.description} entrou no controle.`
-  const prompt = `Escreva uma única introdução curta, natural e variada em português-BR para confirmar uma movimentação financeira já persistida pela KEVO. Tipo: ${persisted.type}. Descrição: ${persisted.description}. Categoria: ${persisted.categoryName}. Valor: ${formatAmount(persisted.amount)}. Não repita sempre “Olá” ou “Prontinho”, não faça pergunta genérica, não dê conselho, não invente fatos e não inclua links, botões ou um resumo estruturado. Você pode mencionar apenas os dados fornecidos. Máximo de duas frases e 220 caracteres.`
+async function createContextualGreeting(displayName: string | null, persisted: { description: string; type: string; categoryName: string }) {
+  const firstName = displayName?.trim().split(/\s+/)[0] || null
+  const fallback = firstName ? `Olá, ${firstName}! Transação registrada com sucesso.` : 'Transação registrada com sucesso.'
+  const prompt = `Escreva uma única introdução curta, natural e criativa em português-BR para uma movimentação financeira já persistida pela KEVO. ${firstName ? `O primeiro nome confiável da pessoa é ${firstName}; use-o apenas ocasionalmente.` : 'Não há nome confiável disponível; não invente um.'} Tipo: ${persisted.type}. Descrição: ${persisted.description}. Categoria: ${persisted.categoryName}. Faça um comentário leve, hipotético e semanticamente seguro sobre o contexto da descrição, sem repetir valor, descrição ou categoria, pois o resumo estruturado virá logo abaixo. Não diga “Prontinho”, “Tudo anotado por aqui” ou faça pergunta genérica. Não invente estabelecimento, produto, localização, pessoa, motivo, evento ou qualquer fato. Máximo de duas frases curtas e 220 caracteres.`
   try {
     const generated = await generateWhatsAppReply(prompt)
     const clean = generated?.replace(/\s+/g, ' ').trim()
@@ -478,7 +477,9 @@ function buildTransactionConfirmation(greeting: string, persisted: { description
 ✅ *Status:* Registrado com sucesso
 
 📊 Para visualizar mais detalhes e relatórios, acesse seu painel:
-https://panel.kevoia.com`
+https://panel.kevoia.com
+
+Se precisar de algo a mais, é só me chamar! 😊`
 }
 
 async function createReply(message: string) {
@@ -848,7 +849,7 @@ export async function POST(request: Request) {
           const persisted = result.persisted && 'description' in result.persisted
             ? result.persisted
             : { description: normalizeTransactionDescription(intent.description), amount: intent.amount, type: intent.type, transaction_date: intent.transactionDate, category_id: null }
-          const greeting = await createContextualGreeting(linkedUser.display_name, { description: String(persisted.description), type: String(persisted.type), categoryName, amount: Number(persisted.amount) })
+          const greeting = await createContextualGreeting(linkedUser.display_name, { description: String(persisted.description), type: String(persisted.type), categoryName })
           reply = buildTransactionConfirmation(greeting, { description: String(persisted.description), amount: Number(persisted.amount), categoryName, transactionDate: String(persisted.transaction_date) })
         } else if (result.reason === 'multiple_accounts') {
           await saveMissingAccountIntent(claim.admin, message.messageId, linkedUser.id, intent)
