@@ -50,9 +50,10 @@ async function getSubscription(user, email) {
   if (error) throw error
   return data?.[0] || null
 }
-async function subscriptionPayload(userId, columns) {
+async function subscriptionPayload(userId, normalizedEmail, columns) {
   const row = { user_id: userId, plan: 'kevo', status: 'active', source: 'manual_test', is_demo: true, purchased_at: null, expires_at: null }
-  for (const column of ['customer_email', 'kiwify_customer_id', 'kiwify_order_id', 'product_id', 'payment_id', 'transaction_id', 'purchase_id']) if (columns.has(column)) row[column] = null
+  if (columns.has('customer_email')) row.customer_email = normalizedEmail
+  for (const column of ['kiwify_customer_id', 'kiwify_order_id', 'product_id', 'payment_id', 'transaction_id', 'purchase_id']) if (columns.has(column)) row[column] = null
   return row
 }
 async function columns() {
@@ -91,7 +92,7 @@ for (const target of normalized) {
     } else user = data.user
     byEmail.set(target.normalized, user)
   }
-  const { error } = await supabase.from('subscriptions').insert(await subscriptionPayload(user.id, columnsSet))
+  const { error } = await supabase.from('subscriptions').insert(await subscriptionPayload(user.id, target.normalized, columnsSet))
   results.push(error ? { email: target.normalized, action: 'CREATE_SUBSCRIPTION', result: 'PARTIAL_AUTH_CREATED', error: safeError(error) } : { email: target.normalized, action: 'CREATE_AUTH_AND_SUBSCRIPTION', result: 'CREATED', user_id: shortId(user.id) })
 }
 console.log(JSON.stringify({ mode, total: results.length, results }, null, 2))
