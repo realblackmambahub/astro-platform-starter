@@ -7,6 +7,7 @@ import { generateWhatsAppReply } from '@/services/whatsapp/gemini-reply'
 import { getWebhookAdminClient } from '@/services/subscription-access'
 import {
   parseFinanceIntent,
+  parseBalanceIntent,
   type FinanceIntent,
 } from '@/services/whatsapp/finance-intent'
 
@@ -242,6 +243,19 @@ async function saveMissingAccountIntent(admin: WebhookAdminClient, messageId: st
     status: 'pending_missing_account',
     metadata: { action: 'missing_account', intent },
   }).eq('wa_message_id', messageId).eq('direction', 'inbound')
+}
+
+async function updateCurrentBalance(admin: WebhookAdminClient, userId: string, amount: number) {
+  if (!admin) return false
+  const [{ data: accounts, error }, { data: transactions, error: transactionsError }] = await Promise.all([
+    admin.from('accounts').select('id').eq('user_id', userId).order('created_at', { ascending: true }).limit(1),
+    admin.from('transactions').select('amount, type').eq('user_id', userId),
+  ])
+  if (error || transactionsError || !accounts?.[0]) return false
+  const transactionNet = (transactions ?? []).reduce((sum, transaction) => sum + (transaction.type === 'income' ? Number(transaction.amount) : -Math.abs(Number(transaction.amount))), 0)
+  const baseBalance = amount - transactionNet
+  const { error: updateError } = await admin.from('accounts').update({ balance: baseBalance, updated_at: new Date().toISOString() }).eq('id', accounts[0].id).eq('user_id', userId)
+  return !updateError
 }
 
 async function createTransaction(admin: WebhookAdminClient, userId: string, intent: FinanceIntent, whatsappMessageId: string) {
@@ -611,6 +625,7 @@ export async function POST(request: Request) {
 
       const linkedUser = await user
       const intent = parseFinanceIntent(message.text)
+      const balanceIntent = parseBalanceIntent(message.text)
       let transactionId: string | undefined
       let categoryName = 'Sem categoria'
 
@@ -638,6 +653,11 @@ export async function POST(request: Request) {
       } else if (confirmDeleteMatch) {
         const deleted = await deleteOwnedTransaction(claim.admin, message.from, confirmDeleteMatch[1])
         reply = deleted.ok ? 'Transação excluída com sucesso.' : 'Não consegui excluir essa transação. Verifique se ela pertence à sua conta.'
+      } else if (balanceIntent && linkedUser) {
+        const updated = await updateCurrentBalance(claim.admin, linkedUser.id, balanceIntent.amount)
+        reply = updated
+          ? `Saldo atualizado com sucesso para ${formatAmount(balanceIntent.amount)}. O painel KEVO já reflete esse valor.`
+          : 'Não consegui atualizar seu saldo. Verifique se você possui uma conta financeira cadastrada.'
       } else if (intent && linkedUser) {
         const result = await createTransaction(claim.admin, linkedUser.id, intent, message.messageId)
         if (result.ok) {
