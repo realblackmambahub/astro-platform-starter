@@ -3,6 +3,7 @@ import type { TransactionRecord } from './transactions-repository'
 
 export type FinancialSnapshot = {
   transactions: TransactionRecord[]
+  allTransactions: TransactionRecord[]
   accounts: Array<Record<string, unknown>>
   budgets: Array<Record<string, unknown>>
   goals: Array<Record<string, unknown>>
@@ -22,10 +23,12 @@ export async function getFinancialSnapshot(period = '6M'): Promise<FinancialSnap
     const query = supabase.from(table).select('*').eq('user_id', auth.user.id).order(table === 'transactions' ? 'transaction_date' : 'created_at', { ascending: false }).limit(table === 'transactions' ? 500 : 100)
     return table === 'transactions' ? query.gte('transaction_date', from.toISOString().slice(0, 10)) : query
   }))
-  const failed = results.find((result) => result.error)
+  const allTransactionsResult = await supabase.from('transactions').select('*').eq('user_id', auth.user.id).order('transaction_date', { ascending: false }).limit(5000)
+  const failed = results.find((result) => result.error) ?? (allTransactionsResult.error ? allTransactionsResult : null)
   if (failed?.error) throw new Error('Não foi possível consolidar os dados financeiros.')
   return {
     transactions: (results[0].data ?? []) as TransactionRecord[],
+    allTransactions: (allTransactionsResult.data ?? []) as TransactionRecord[],
     accounts: (results[1].data ?? []) as Array<Record<string, unknown>>,
     budgets: (results[2].data ?? []) as Array<Record<string, unknown>>,
     goals: (results[3].data ?? []) as Array<Record<string, unknown>>,

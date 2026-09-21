@@ -8,9 +8,21 @@ export type FinanceIntent = {
   transactionDate: string
 }
 
+export type BalanceIntent = {
+  type: 'balance'
+  amount: number
+}
+
 const AMOUNT_PATTERN = /(?:r\$\s*)?([\d.]+(?:,\d{1,2})?|[\d]+(?:\.\d{1,2})?)/i
 const EXPENSE_PATTERN = /\b(gastei|paguei|comprei|despesa|saiu|pagamento)\b/i
 const INCOME_PATTERN = /\b(recebi|ganhei|entrou|renda|salário|salario|vendi|receita)\b/i
+const BALANCE_PATTERN = /\b(tenho|possuo|meu saldo|saldo atual|agora meu saldo|agora tenho)\b/i
+
+export function parseBalanceIntent(text: string): BalanceIntent | null {
+  const amount = parseAmount(text)
+  if (!amount || !BALANCE_PATTERN.test(text) || EXPENSE_PATTERN.test(text) || INCOME_PATTERN.test(text)) return null
+  return { type: 'balance', amount: Number(amount.toFixed(2)) }
+}
 
 function parseAmount(text: string) {
   const match = text.match(AMOUNT_PATTERN)
