@@ -131,15 +131,9 @@ function FinanceWorkspace({ active }: { active: string }) {
       setToast(error instanceof Error ? error.message : 'Não foi possível excluir.')
     }
   }
-  const amountTotal = filtered.reduce((total: number, row: any) => total + Number(row.balance ?? row.limit_amount ?? row.target_amount ?? row.amount ?? 0), 0)
   return (
     <>
       <Header title={item.title} description={item.description} onAdd={add} />
-      <div className="mb-4 grid gap-3 sm:grid-cols-3">
-        <Card className="border-border/70 bg-card/60 shadow-none"><CardContent className="p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Registros</div><div className="mt-2 text-2xl font-semibold tracking-[-0.05em]">{filtered.length}</div><div className="mt-1 text-[10px] text-muted-foreground">itens persistidos</div></CardContent></Card>
-        <Card className="border-border/70 bg-card/60 shadow-none"><CardContent className="p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Visão consolidada</div><div className="mt-2 truncate text-xl font-semibold tracking-[-0.04em]">{item.amount ? formatBRL(amountTotal) : 'Organizado'}</div><div className="mt-1 text-[10px] text-muted-foreground">calculado com dados reais</div></CardContent></Card>
-        <Card className="border-border/70 bg-primary/[0.06] shadow-none"><CardContent className="p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-primary">Workspace</div><div className="mt-2 text-sm font-medium">{item.title}</div><div className="mt-1 text-[10px] text-muted-foreground">Sincronizado com o core financeiro</div></CardContent></Card>
-      </div>
       <Card className="border-border/80 bg-card/70 shadow-none">
         <CardHeader className="flex-row items-center justify-between gap-3">
           <CardTitle className="text-sm">Dados persistidos</CardTitle>

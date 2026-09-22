@@ -23,29 +23,22 @@ function Metric({
   caption,
   Icon,
   tone = 'neutral',
-  featured = false,
 }: {
   label: string
   value: string
   caption: string
   Icon: typeof Wallet
   tone?: 'neutral' | 'positive' | 'negative'
-  featured?: boolean
 }) {
-  const color = tone === 'positive' ? 'text-chart-2' : tone === 'negative' ? 'text-destructive' : 'text-primary'
   return (
-    <Card className={`group relative overflow-hidden border-border/70 bg-card/60 shadow-none transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/30 hover:bg-card ${featured ? 'border-primary/25 bg-primary/[0.06] sm:col-span-2 xl:col-span-1' : ''}`}>
-      {featured && <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary via-chart-2 to-transparent" />}
+    <Card className="border-border/80 bg-card/70 shadow-none">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           {label}
-          <span className={`grid size-7 place-items-center rounded-md bg-background/60 ${color}`}><Icon className="size-3.5" /></span>
+          <Icon className={`size-4 ${tone === 'positive' ? 'text-chart-2' : tone === 'negative' ? 'text-destructive' : 'text-primary'}`} />
         </div>
-        <div className="mt-4 flex items-end justify-between gap-2">
-          <div className={`text-xl font-semibold tracking-[-0.04em] ${featured ? 'text-2xl' : ''}`}>{value}</div>
-          {featured && <span className="mb-1 text-[10px] text-chart-2">disponível</span>}
-        </div>
-        <div className="mt-1.5 text-[10px] text-muted-foreground">{caption}</div>
+        <div className="mt-3 text-xl font-semibold tracking-tight">{value}</div>
+        <div className="mt-1 text-[10px] text-muted-foreground">{caption}</div>
       </CardContent>
     </Card>
   )
@@ -116,18 +109,18 @@ function Overview() {
   }
 
   return (
-    <main className="kevo-flow mx-auto max-w-[1500px] p-4 sm:p-7">
-      <div className="relative z-10 mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+    <main className="mx-auto max-w-[1500px] p-4 sm:p-7">
+      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <div className="mb-3 flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.18em] text-primary"><span className="size-1.5 rounded-full bg-primary shadow-[0_0_10px_var(--primary)]" /> KEVO / Command Center</div>
-          <h1 className="text-[clamp(1.6rem,3vw,2.25rem)] font-semibold tracking-[-0.06em]">Visão geral financeira</h1>
-          <p className="mt-2 max-w-xl text-sm text-muted-foreground">Uma leitura precisa do seu dinheiro, com contexto para decidir o próximo movimento.</p>
+          <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-primary">KEVO / Financial Cockpit</div>
+          <h1 className="text-2xl font-semibold">Visão geral financeira</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Dados reais, organizados em contexto.</p>
         </div>
-        <Button size="sm" className="h-9 shadow-[0_8px_25px_-12px_var(--primary)]" onClick={() => setDialogOpen(true)}>Nova movimentação</Button>
+        <Button size="sm" onClick={() => setDialogOpen(true)}>Nova movimentação</Button>
       </div>
 
-      <div className="relative z-10 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric featured label="Saldo atual" value={formatBRL(summary.currentBalance)} caption="Saldo disponível nas contas" Icon={Wallet} />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Saldo atual" value={formatBRL(summary.currentBalance)} caption="Saldo disponível nas contas" Icon={Wallet} />
         <Metric label="Receitas" value={formatBRL(summary.income)} caption={`Período ${period}`} Icon={TrendingUp} tone="positive" />
         <Metric label="Despesas" value={formatBRL(summary.expenses)} caption={`Período ${period}`} Icon={TrendingDown} tone="negative" />
         <Metric
@@ -139,19 +132,7 @@ function Overview() {
         />
       </div>
 
-      <div className="relative z-10 mt-4 grid gap-3 lg:grid-cols-[1.35fr_0.65fr]">
-        <Card className="kevo-insight border-primary/15 bg-primary/[0.045] shadow-none">
-          <CardContent className="flex min-h-[92px] items-center gap-4 p-4 sm:p-5">
-            <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Zap className="size-4" /></div>
-            <div><div className="text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Leitura do período</div><p className="mt-1 text-sm leading-5 text-foreground">{summary.result < 0 ? 'As despesas superaram as receitas neste período.' : summary.result > 0 ? 'O período fechou com resultado positivo.' : 'Ainda não há resultado suficiente para uma leitura.'}</p><p className="mt-1 text-[10px] text-muted-foreground">Baseado apenas nas movimentações persistidas.</p></div>
-          </CardContent>
-        </Card>
-        <Card className="border-border/70 bg-card/50 shadow-none">
-          <CardContent className="flex min-h-[92px] items-center justify-between gap-4 p-4 sm:p-5"><div><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Registros no período</div><div className="mt-2 text-2xl font-semibold tracking-[-0.05em]">{data.transactions.length}</div></div><div className="text-right text-[10px] text-muted-foreground">Movimentações<br />analisadas</div></CardContent>
-        </Card>
-      </div>
-
-      <div className="relative z-10 mt-4 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Card className="bg-card/70 shadow-none">
           <CardHeader className="flex-row items-center justify-between">
             <div>
@@ -186,7 +167,7 @@ function Overview() {
         </Card>
       </div>
 
-      <div className="relative z-10 mt-4">
+      <div className="mt-4">
         <Card className="bg-card/70 shadow-none">
           <CardHeader>
             <CardTitle className="text-sm">Movimentações recentes</CardTitle>
