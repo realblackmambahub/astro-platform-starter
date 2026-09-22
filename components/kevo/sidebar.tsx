@@ -77,11 +77,12 @@ export function KevoSidebar({
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="flex h-[68px] shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4 lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0">
-          <div className="flex flex-col leading-none lg:group-data-[collapsed=true]/sidebar:hidden">
-            <span className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-              KEVO<span className="text-primary">.</span>
-            </span>
-            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Financial OS</span>
+          <div className="flex h-8 w-[108px] items-center lg:group-data-[collapsed=true]/sidebar:hidden">
+            <img
+              src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/ChatGPT%20Image%2022%20de%20set.%20de%202026%2C%2016_36_02-mHql1sMtp2lHgx3aCUKVe1uR3Xipyv.png"
+              alt="KEVO"
+              className="h-full w-full object-contain object-left"
+            />
           </div>
           <button
             className="ml-auto rounded-lg p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground lg:hidden"
