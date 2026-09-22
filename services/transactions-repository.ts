@@ -45,6 +45,12 @@ export async function createTransaction(input: TransactionInput) {
   return data as TransactionRecord
 }
 
+export async function deleteTransaction(id: string) {
+  const { supabase, userId } = await sessionUserId()
+  const { error } = await supabase.from('transactions').delete().eq('id', id).eq('user_id', userId)
+  if (error) throw new Error('Não foi possível excluir esta movimentação.')
+}
+
 export function normalizeDescription(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import useSWR from 'swr'
 import {
   Activity,
   BarChart3,
@@ -11,6 +12,7 @@ import {
   Landmark,
   LayoutDashboard,
   Link2,
+  LogOut,
   PanelLeftClose,
   PanelLeftOpen,
   Receipt,
@@ -24,6 +26,8 @@ import {
   X,
 } from 'lucide-react'
 import { navGroups } from '@/lib/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { useRouter } from 'next/navigation'
 
 const icons: Record<string, typeof LayoutDashboard> = {
   layout: LayoutDashboard,
@@ -46,6 +50,18 @@ const icons: Record<string, typeof LayoutDashboard> = {
   configurações: Settings2,
 }
 
+function useProfile() {
+  return useSWR('kevo-profile', async () => {
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return null
+    const result = await supabase.from('profiles').select('first_name,last_name').eq('id', user.id).maybeSingle()
+    return { email: user.email ?? '', firstName: result.data?.first_name ?? '', lastName: result.data?.last_name ?? '' }
+  })
+}
+
 export function KevoSidebar({
   active,
   onSelect,
@@ -61,6 +77,17 @@ export function KevoSidebar({
   collapsed: boolean
   onToggleCollapsed: () => void
 }) {
+  const { data: profile } = useProfile()
+  const router = useRouter()
+  const displayName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') || profile?.email || ''
+  const initial = displayName ? displayName.charAt(0).toUpperCase() : '·'
+
+  const signOut = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.replace('/auth/login')
+  }
+
   return (
     <>
       {mobileOpen && (
@@ -131,6 +158,25 @@ export function KevoSidebar({
         </nav>
 
         <div className="shrink-0 border-t border-sidebar-border p-3">
+          {profile !== undefined && (
+            <div className="mb-1 flex items-center gap-2.5 rounded-lg px-2 py-2 lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0">
+              <div className="grid size-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-primary to-chart-2 text-xs font-semibold text-primary-foreground">
+                {initial}
+              </div>
+              <div className="min-w-0 lg:group-data-[collapsed=true]/sidebar:hidden">
+                <div className="truncate text-xs font-medium text-sidebar-foreground">{displayName || 'Conta'}</div>
+                <div className="truncate text-[10px] text-muted-foreground">{profile?.email}</div>
+              </div>
+              <button
+                onClick={signOut}
+                aria-label="Sair da conta"
+                title="Sair"
+                className="ml-auto shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-destructive lg:group-data-[collapsed=true]/sidebar:hidden"
+              >
+                <LogOut className="size-3.5" />
+              </button>
+            </div>
+          )}
           <button
             onClick={onToggleCollapsed}
             className="hidden w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground lg:flex lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0"

@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Check, Plus, Search, Trash2, X } from 'lucide-react'
+import { Check, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useFinanceTable } from '@/hooks/use-finance-table'
@@ -9,6 +9,8 @@ import type { FinanceTable } from '@/services/finance-repository'
 import { useTransactions } from '@/hooks/use-transactions'
 import { useFinancialSnapshot } from '@/hooks/use-financial-snapshot'
 import { formatBRL } from '@/lib/mock-data'
+import { TransactionDialog, type TransactionFormValue } from './transaction-dialog'
+import { deleteTransaction } from '@/services/transactions-repository'
 
 const config: Record<string, { table: FinanceTable; title: string; description: string; name: string; amount?: string }> = {
   categorias: { table: 'categories', title: 'Categorias', description: 'Organize seus gastos com dados persistidos.', name: 'Nome' },
@@ -210,18 +212,77 @@ function FinanceWorkspace({ active }: { active: string }) {
 }
 
 function TransactionsWorkspace() {
-  const { data, loading, error } = useTransactions()
+  const { data, loading, error, refresh } = useTransactions()
+  const [search, setSearch] = useState('')
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editing, setEditing] = useState<TransactionFormValue>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const filtered = useMemo(
+    () => data.filter((row) => row.description.toLowerCase().includes(search.toLowerCase())),
+    [data, search],
+  )
+
+  const openCreate = () => {
+    setEditing(null)
+    setDialogOpen(true)
+  }
+
+  const openEdit = (row: (typeof data)[number]) => {
+    setEditing({
+      id: row.id,
+      description: row.description,
+      amount: row.amount,
+      type: row.type,
+      transaction_date: row.transaction_date,
+      category_id: row.category_id,
+      account_id: row.account_id,
+      notes: row.notes,
+    })
+    setDialogOpen(true)
+  }
+
+  const remove = async (id: string) => {
+    try {
+      await deleteTransaction(id)
+      await refresh()
+      setToast('Movimentação removida.')
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Não foi possível excluir.')
+    }
+  }
+
   return (
     <>
-      <Header title="Movimentações" description="Ledger real, filtrável e sincronizado com o Supabase." onAdd={() => undefined} />
+      <Header title="Movimentações" description="Ledger real, filtrável e sincronizado com o Supabase." onAdd={openCreate} />
       <Card className="border-border/80 bg-card/70 shadow-none">
+        <CardHeader className="flex-row items-center justify-between gap-3">
+          <CardTitle className="text-sm">Dados persistidos</CardTitle>
+          <label className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+            <Search className="size-3 text-muted-foreground" />
+            <input
+              aria-label="Buscar movimentações"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar"
+              className="w-36 bg-transparent outline-none placeholder:text-muted-foreground"
+            />
+          </label>
+        </CardHeader>
         <CardContent>
           {loading ? (
             <div className="py-16 text-center text-xs text-muted-foreground">Carregando…</div>
           ) : error ? (
             <div className="py-16 text-center text-xs text-destructive">{error}</div>
-          ) : data.length === 0 ? (
-            <div className="py-16 text-center text-xs text-muted-foreground">Nenhuma movimentação persistida ainda.</div>
+          ) : filtered.length === 0 ? (
+            <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 text-center">
+              <div className="text-sm font-medium">Nenhuma movimentação encontrada</div>
+              <p className="text-xs text-muted-foreground">Registre a primeira movimentação real para começar a acompanhar seu ledger.</p>
+              <Button variant="outline" size="sm" onClick={openCreate}>
+                <Plus data-icon="inline-start" />
+                Criar agora
+              </Button>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[680px] text-left text-xs">
@@ -230,15 +291,34 @@ function TransactionsWorkspace() {
                     <th className="px-3 py-3">Data</th>
                     <th className="px-3 py-3">Descrição</th>
                     <th className="px-3 py-3 text-right">Valor</th>
+                    <th className="px-3 py-3 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.map((row) => (
+                  {filtered.map((row) => (
                     <tr key={row.id} className="border-b border-border/60 transition-colors hover:bg-accent/40">
                       <td className="px-3 py-3 text-muted-foreground">{new Date(row.transaction_date).toLocaleDateString('pt-BR')}</td>
                       <td className="px-3 py-3 font-medium">{row.description}</td>
                       <td className={`px-3 py-3 text-right tabular-nums ${row.type === 'income' ? 'text-chart-2' : 'text-foreground'}`}>
                         {row.type === 'income' ? '+' : '−'} {formatBRL(Math.abs(Number(row.amount)))}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openEdit(row)}
+                            aria-label={`Editar ${row.description}`}
+                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                          <button
+                            onClick={() => remove(row.id)}
+                            aria-label={`Excluir ${row.description}`}
+                            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -248,6 +328,8 @@ function TransactionsWorkspace() {
           )}
         </CardContent>
       </Card>
+      <TransactionDialog open={dialogOpen} onOpenChange={setDialogOpen} transaction={editing} onSaved={refresh} />
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
     </>
   )
 }
