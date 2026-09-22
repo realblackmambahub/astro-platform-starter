@@ -8,9 +8,10 @@ export type FinancialSnapshot = {
   budgets: Array<Record<string, unknown>>
   goals: Array<Record<string, unknown>>
   bills: Array<Record<string, unknown>>
+  categories: Array<Record<string, unknown>>
 }
 
-const tables = ['transactions', 'accounts', 'budgets', 'goals', 'bills'] as const
+const tables = ['transactions', 'accounts', 'budgets', 'goals', 'bills', 'categories'] as const
 
 export async function getFinancialSnapshot(period = '6M'): Promise<FinancialSnapshot> {
   const supabase = createClient()
@@ -33,6 +34,7 @@ export async function getFinancialSnapshot(period = '6M'): Promise<FinancialSnap
     budgets: (results[2].data ?? []) as Array<Record<string, unknown>>,
     goals: (results[3].data ?? []) as Array<Record<string, unknown>>,
     bills: (results[4].data ?? []) as Array<Record<string, unknown>>,
+    categories: (results[5].data ?? []) as Array<Record<string, unknown>>,
   }
 }
 
@@ -71,4 +73,51 @@ export function summarizeFinancials(snapshot: FinancialSnapshot) {
     nextBill,
     goal,
   }
+}
+
+const MONTH_LABELS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+
+export function buildMonthlySeries(snapshot: FinancialSnapshot) {
+  const byMonth = new Map<string, { income: number; expense: number }>()
+  for (const row of snapshot.transactions) {
+    const key = String(row.transaction_date).slice(0, 7)
+    if (key.length !== 7) continue
+    const entry = byMonth.get(key) ?? { income: 0, expense: 0 }
+    const cents = toCents(row.amount)
+    if (row.type === 'income') entry.income += cents
+    else entry.expense += Math.abs(cents)
+    byMonth.set(key, entry)
+  }
+  return [...byMonth.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => {
+      const monthIndex = Number(key.slice(5, 7)) - 1
+      return {
+        key,
+        month: MONTH_LABELS[monthIndex] ?? key,
+        receitas: fromCents(value.income),
+        despesas: fromCents(value.expense),
+      }
+    })
+}
+
+const CATEGORY_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
+
+export function buildCategoryBreakdown(snapshot: FinancialSnapshot) {
+  const nameById = new Map(snapshot.categories.map((row) => [String(row.id), String(row.name ?? 'Categoria')]))
+  const totals = new Map<string, number>()
+  for (const row of snapshot.transactions) {
+    if (row.type !== 'expense') continue
+    const key = row.category_id ? String(row.category_id) : 'sem-categoria'
+    totals.set(key, (totals.get(key) ?? 0) + Math.abs(toCents(row.amount)))
+  }
+  const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1])
+  const totalCents = sorted.reduce((sum, [, value]) => sum + value, 0)
+  return sorted.map(([id, cents], index) => ({
+    id,
+    name: id === 'sem-categoria' ? 'Sem categoria' : nameById.get(id) ?? 'Categoria',
+    value: fromCents(cents),
+    percent: totalCents ? Math.round((cents / totalCents) * 100) : 0,
+    color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
+  }))
 }
