@@ -36,12 +36,39 @@ export async function getFinancialSnapshot(period = '6M'): Promise<FinancialSnap
   }
 }
 
+function toCents(value: unknown) {
+  const amount = Number(value ?? 0)
+  return Number.isFinite(amount) ? Math.round(amount * 100) : 0
+}
+
+function fromCents(value: number) {
+  return value / 100
+}
+
+export function calculateCurrentBalance(snapshot: FinancialSnapshot) {
+  const baseBalance = snapshot.accounts.reduce((sum, account) => sum + toCents(account.balance), 0)
+  const transactionNet = snapshot.allTransactions.reduce((sum, transaction) => {
+    const cents = toCents(transaction.amount)
+    return sum + (transaction.type === 'income' ? cents : -Math.abs(cents))
+  }, 0)
+  return fromCents(baseBalance + transactionNet)
+}
+
 export function summarizeFinancials(snapshot: FinancialSnapshot) {
-  const income = snapshot.transactions.filter((row) => row.type === 'income').reduce((sum, row) => sum + Number(row.amount), 0)
-  const expenses = snapshot.transactions.filter((row) => row.type === 'expense').reduce((sum, row) => sum + Math.abs(Number(row.amount)), 0)
+  const incomeCents = snapshot.transactions.filter((row) => row.type === 'income').reduce((sum, row) => sum + toCents(row.amount), 0)
+  const expensesCents = snapshot.transactions.filter((row) => row.type === 'expense').reduce((sum, row) => sum + Math.abs(toCents(row.amount)), 0)
   const budget = snapshot.budgets.reduce((sum, row) => sum + Number(row.limit_amount ?? 0), 0)
-  const spent = expenses
+  const spent = fromCents(expensesCents)
   const nextBill = [...snapshot.bills].filter((row) => row.status !== 'paid').sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0]
   const goal = [...snapshot.goals].sort((a, b) => Number(b.current_amount ?? 0) / Math.max(Number(b.target_amount ?? 1), 1) - Number(a.current_amount ?? 0) / Math.max(Number(a.target_amount ?? 1), 1))[0]
-  return { income, expenses, result: income - expenses, budget, spent, nextBill, goal }
+  return {
+    income: fromCents(incomeCents),
+    expenses: fromCents(expensesCents),
+    result: fromCents(incomeCents - expensesCents),
+    currentBalance: calculateCurrentBalance(snapshot),
+    budget,
+    spent,
+    nextBill,
+    goal,
+  }
 }

@@ -13,7 +13,7 @@ export type BalanceIntent = {
   amount: number
 }
 
-const AMOUNT_PATTERN = /(?:r\$\s*)?([\d.]+(?:,\d{1,2})?|[\d]+(?:\.\d{1,2})?)/i
+const AMOUNT_PATTERN = /(?:r\$\s*)?([\d.]+(?:,\d{1,2})?|[\d]+(?:\.\d{1,2})?)(?:\s*(mil|k|milhão|milhoes|milhões|m))?/i
 const EXPENSE_PATTERN = /\b(gastei|paguei|comprei|despesa|saiu|pagamento)\b/i
 const INCOME_PATTERN = /\b(recebi|ganhei|entrou|renda|salário|salario|vendi|receita)\b/i
 const BALANCE_PATTERN = /\b(tenho|possuo|meu saldo|saldo atual|agora meu saldo|agora tenho)\b/i
@@ -27,9 +27,19 @@ export function parseBalanceIntent(text: string): BalanceIntent | null {
 function parseAmount(text: string) {
   const match = text.match(AMOUNT_PATTERN)
   if (!match) return null
+
   const raw = match[1]
+  const suffix = match[2]?.toLowerCase()
   const normalized = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw
-  const amount = Number(normalized)
+  const baseAmount = Number(normalized)
+  if (!Number.isFinite(baseAmount) || baseAmount <= 0) return null
+
+  const multiplier = suffix === 'mil' || suffix === 'k' || suffix === 'm'
+    ? 1_000
+    : suffix === 'milhão' || suffix === 'milhoes' || suffix === 'milhões'
+      ? 1_000_000
+      : 1
+  const amount = baseAmount * multiplier
   return Number.isFinite(amount) && amount > 0 ? amount : null
 }
 
