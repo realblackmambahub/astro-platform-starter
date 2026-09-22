@@ -77,9 +77,6 @@ export function KevoSidebar({
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="flex h-[68px] shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4 lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0">
-          <div className="kevo-mark grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-primary to-chart-2 text-xs font-bold text-primary-foreground">
-            K
-          </div>
           <div className="flex flex-col leading-none lg:group-data-[collapsed=true]/sidebar:hidden">
             <span className="text-sm font-semibold tracking-tight text-sidebar-foreground">
               KEVO<span className="text-primary">.</span>
