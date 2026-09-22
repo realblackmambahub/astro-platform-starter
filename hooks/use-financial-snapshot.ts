@@ -11,5 +11,10 @@ export function useFinancialSnapshot(period: string) {
   useEffect(() => {
     if (result.error instanceof Error && result.error.message === 'AUTH_REQUIRED') router.replace('/auth/login')
   }, [result.error, router])
-  return { ...result, summary: result.data ? summarizeFinancials(result.data) : null, loading: !result.data && !result.error }
+  return {
+    ...result,
+    summary: result.data ? summarizeFinancials(result.data) : null,
+    loading: !result.data && !result.error,
+    refresh: result.mutate,
+  }
 }

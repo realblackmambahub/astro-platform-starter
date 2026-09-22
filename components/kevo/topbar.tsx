@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { ChevronRight, Menu, Search } from 'lucide-react'
 import { navGroups } from '@/lib/navigation'
@@ -55,6 +55,21 @@ export function KevoTopbar({
     inputRef.current?.blur()
   }
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        inputRef.current?.focus()
+      }
+      if (event.key === 'Escape') {
+        setFocused(false)
+        inputRef.current?.blur()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   return (
     <header className="sticky top-0 z-30 flex h-[68px] items-center gap-3 border-b border-border/70 bg-background/90 px-4 backdrop-blur-xl sm:px-7">
       <button
@@ -81,8 +96,13 @@ export function KevoTopbar({
           onBlur={() => setTimeout(() => setFocused(false), 120)}
           placeholder="Buscar em módulos…"
           aria-label="Buscar módulos"
-          className="w-full rounded-lg border border-border bg-card/60 py-2 pl-8 pr-3 text-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
+          className="w-full rounded-lg border border-border bg-card/60 py-2 pl-8 pr-12 text-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
         />
+        {!query && (
+          <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground sm:flex">
+            ⌘K
+          </kbd>
+        )}
         {focused && results.length > 0 && (
           <div className="absolute right-0 top-[calc(100%+6px)] z-40 w-full min-w-[220px] overflow-hidden rounded-lg border border-border bg-popover shadow-xl">
             {results.map((item) => (

@@ -12,9 +12,10 @@ import { KevoTopbar } from './topbar'
 import { TrendChart, CategoryDonut } from './overview-charts'
 import { useFinancialSnapshot } from '@/hooks/use-financial-snapshot'
 import { buildCategoryBreakdown, buildMonthlySeries } from '@/services/financial-aggregator'
+import { TransactionDialog } from './transaction-dialog'
 
 const periods = ['30D', '3M', '6M', '1A']
-const secondaryModules = ['agenda', 'projetos', 'drive', 'insights', 'plano', 'integrações', 'configurações', 'planilhas']
+const secondaryModules = ['projetos', 'drive', 'insights', 'plano', 'integrações', 'configurações', 'planilhas']
 
 function Metric({
   label,
@@ -73,7 +74,8 @@ function RecentTransactions({ data }: { data: Array<{ id: string; description: s
 
 function Overview() {
   const [period, setPeriod] = useState('6M')
-  const { data, summary, error, loading } = useFinancialSnapshot(period)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const { data, summary, error, loading, refresh } = useFinancialSnapshot(period)
 
   const trendSeries = useMemo(() => (data ? buildMonthlySeries(data) : []), [data])
   const categorySeries = useMemo(() => (data ? buildCategoryBreakdown(data) : []), [data])
@@ -86,10 +88,13 @@ function Overview() {
   if (!data || !summary || !hasData) {
     return (
       <main className="mx-auto max-w-[1500px] p-4 sm:p-7">
-        <div className="mb-8">
-          <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-primary">KEVO / Financial Cockpit</div>
-          <h1 className="text-2xl font-semibold">Seu cockpit está pronto.</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Adicione sua primeira movimentação, conta, meta ou orçamento para começar.</p>
+        <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div>
+            <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-primary">KEVO / Financial Cockpit</div>
+            <h1 className="text-2xl font-semibold">Seu cockpit está pronto.</h1>
+            <p className="mt-2 text-sm text-muted-foreground">Adicione sua primeira movimentação, conta, meta ou orçamento para começar.</p>
+          </div>
+          <Button size="sm" onClick={() => setDialogOpen(true)}>Nova movimentação</Button>
         </div>
         <Card className="border-dashed bg-card/40 shadow-none">
           <CardContent className="flex min-h-[260px] flex-col items-center justify-center gap-3 text-center">
@@ -98,6 +103,7 @@ function Overview() {
             <p className="max-w-md text-xs leading-5 text-muted-foreground">Os indicadores serão calculados a partir dos seus registros reais. Nada demonstrativo é exibido aqui.</p>
           </CardContent>
         </Card>
+        <TransactionDialog open={dialogOpen} onOpenChange={setDialogOpen} onSaved={refresh} />
       </main>
     )
   }
@@ -110,7 +116,7 @@ function Overview() {
           <h1 className="text-2xl font-semibold">Visão geral financeira</h1>
           <p className="mt-1 text-sm text-muted-foreground">Dados reais, organizados em contexto.</p>
         </div>
-        <Button size="sm">Nova movimentação</Button>
+        <Button size="sm" onClick={() => setDialogOpen(true)}>Nova movimentação</Button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -172,6 +178,7 @@ function Overview() {
           </CardContent>
         </Card>
       </div>
+      <TransactionDialog open={dialogOpen} onOpenChange={setDialogOpen} onSaved={refresh} />
     </main>
   )
 }
