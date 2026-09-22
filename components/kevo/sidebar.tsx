@@ -103,14 +103,12 @@ export function KevoSidebar({
           collapsed ? 'lg:w-[76px]' : 'lg:w-[248px]'
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className="flex h-[68px] shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4 lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0">
-          <div className="flex h-8 w-[108px] items-center lg:group-data-[collapsed=true]/sidebar:hidden">
-            <img
-              src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/ChatGPT%20Image%2022%20de%20set.%20de%202026%2C%2016_36_02-mHql1sMtp2lHgx3aCUKVe1uR3Xipyv.png"
-              alt="KEVO"
-              className="h-full w-full object-contain object-left"
-            />
-          </div>
+        <div className="flex h-[68px] shrink-0 items-center gap-2.5 border-b border-sidebar-border px-5 lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0">
+          <div className="flex items-baseline gap-2 lg:group-data-[collapsed=true]/sidebar:hidden">
+            <span className="text-[18px] font-semibold tracking-[-0.08em] text-sidebar-foreground">KEVO</span>
+            <span className="text-[9px] uppercase tracking-[0.18em] text-muted-foreground">OS</span>
+          </div> 
+          <div className="hidden text-sm font-semibold tracking-[-0.08em] text-sidebar-foreground lg:group-data-[collapsed=true]/sidebar:block">K</div> 
           <button
             className="ml-auto rounded-lg p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground lg:hidden"
             onClick={onCloseMobile}
@@ -120,7 +118,7 @@ export function KevoSidebar({
           </button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-4" aria-label="Navegação principal">
+        <nav className="flex flex-1 flex-col gap-6 overflow-y-auto px-3 py-5" aria-label="Navegação principal">
           {navGroups.map((group) => (
             <div key={group.label || 'principal'}>
               {group.label && (
@@ -141,10 +139,10 @@ export function KevoSidebar({
                         onSelect(item.href)
                         onCloseMobile()
                       }}
-                      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-left text-xs transition-colors lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0 ${
+                      className={`group/navitem flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left text-xs transition-all duration-200 lg:group-data-[collapsed=true]/sidebar:justify-center lg:group-data-[collapsed=true]/sidebar:px-0 ${
                         isActive
-                          ? 'kevo-nav-active font-medium text-primary'
-                          : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground'
+                          ? 'kevo-nav-active border-primary/15 font-medium text-primary shadow-[0_8px_24px_-18px_var(--primary)]'
+                          : 'text-muted-foreground hover:border-border/70 hover:bg-sidebar-accent/70 hover:text-sidebar-foreground'
                       }`}
                     >
                       <Icon className="size-4 shrink-0" />

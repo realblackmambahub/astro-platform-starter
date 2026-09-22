@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
-import { ChevronRight, Menu, Search } from 'lucide-react'
+import { Bell, ChevronRight, Menu, Search } from 'lucide-react'
 import { navGroups } from '@/lib/navigation'
 import { createClient } from '@/lib/supabase/client'
 
@@ -119,12 +119,16 @@ export function KevoTopbar({
         )}
       </div>
 
-      <div
-        className="grid size-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-primary to-chart-2 text-xs font-semibold text-primary-foreground"
-        aria-hidden="true"
-      >
-        {initial || '·'}
-      </div>
+      <button aria-label="Notificações" className="relative hidden size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:grid">
+        <Bell className="size-4" />
+        <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
+      </button>
+      <button aria-label="Abrir menu da conta" className="group/account flex items-center gap-2 rounded-lg p-1 transition-colors hover:bg-accent">
+        <div className="grid size-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-primary to-chart-2 text-xs font-semibold text-primary-foreground" aria-hidden="true">
+          {initial || '·'}
+        </div>
+        <ChevronRight className="hidden size-3 rotate-90 text-muted-foreground transition-transform group-hover/account:text-foreground sm:block" />
+      </button>
     </header>
   )
 }
